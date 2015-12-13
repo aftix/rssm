@@ -1,12 +1,12 @@
 CC=gcc
-CFLAGS=-Iinclude/ -c
-LFLAGS=
+CFLAGS=-Iinclude/ -c -ggdb
+LFLAGS=-ggdb
 
 OBJ=obj
 BIN=bin
 
-OBJS=
-EXEC=
+OBJS=$(OBJ)/main.o $(OBJ)/setting.o
+EXEC=$(BIN)/rssm
 
 all: $(OBJ) $(BIN) $(OBJS)
 	$(CC) $(OBJS) $(LFLAGS) -o $(EXEC)
