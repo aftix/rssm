@@ -15,6 +15,7 @@ struct argp_option options[] = {
 	{"verbose",   'v', 0,      0, "Produce verbose output"},
 	{"feedlist",  'f', "FILE", 0, "Specify feedlist file to read from"},
 	{"directory", 'd', "DIR",  0, "Specify directory to place rss data into"},
+	{"logfile",   'l', "FILE", 0, "Specify path for rssm to log"},
 	{ 0 }
 };
 #endif //MAIN_FILE
@@ -24,6 +25,7 @@ struct __options {
 	int verbose;
 	char* list;
 	char* directory;
+	char* log;
 };
 typedef struct __options rssm_options;
 
@@ -32,8 +34,12 @@ typedef struct __options rssm_options;
 error_t parseArg(int key, char* arg, struct argp_state *state);
 
 //For finding $HOME independent of getenv()
-char* getConfigPath();
-char* getHomePath();
+char* getConfigPath(int v);
+char* getHomePath(int v);
+
+//Get a path the log file can be written to in
+//generally /var/log/rssm.$PID.log
+char* getLogPath(const rssm_options *opts, int v);
 
 #ifdef MAIN_FILE
 //Tells argp what is what
