@@ -29,6 +29,13 @@ struct __options {
 };
 typedef struct __options rssm_options;
 
+//A tag and url for an rss feed
+struct __feed {
+	char* url;
+	char* tag;
+};
+typedef struct __feed rssm_feeditem;
+
 //Parse an arguement
 //Return is handled by argp
 error_t parseArg(int key, char* arg, struct argp_state *state);
@@ -40,6 +47,9 @@ char* getHomePath(int v);
 //Get a path the log file can be written to in
 //generally /var/log/rssm.$PID.log
 char* getLogPath(const rssm_options *opts, int v);
+
+//Read in feedlists from a file
+rssm_feeditem** getFeeds(FILE* list, int v, FILE* log);
 
 #ifdef MAIN_FILE
 //Tells argp what is what

@@ -82,9 +82,45 @@ int main(int argc, char** argv) {
 	}
 	chdir("/");
 	
-	//Let's test this
-	printtime(log);
-	fprintf(log, "Hello\n");
+	//Read the feedlist - the default file was already taken care of. If we can't access what's in opts.list we just log and exit
+	//Since an empty feedlist file means rssm will do nothing, no check for writability on the path is needed. If the file isn't there, there is nothing to do so rssm exits, regardless of if the path is writable.
+	if (opts.verbose) {
+		printtime(log);
+		fprintf(log, "Reading in the feedlist...\n");
+	}
+	if (access(opts.list, R_OK) != 0) {
+		printtime(log);
+		fprintf(log, "Can not read the feed configuration file of %s. Exiting.", opts.list);
+		fclose(log);
+		if (strcmp(opts.list, defConf) != 0)
+			free(opts.list);
+		if (strcmp(opts.directory, defDir) != 0)
+			free(opts.directory);
+		if (strcmp(opts.log, defLog) !=0)
+			free(opts.log);
+		free(defConf);
+		free(defDir);
+		free(defLog);
+		return 0;
+	}
+	if (opts.verbose) {
+		printtime(log);
+		fprintf(log, "Reading in feedlists...\n");
+	}
+	//We already made sure we can read the file
+	FILE* feedfile = fopen(opts.list, "r");
+	//List of feed items, currently NULL
+	//this list will always end with a NULL pointer
+	rssm_feeditem** feeds = getFeeds(feedfile, opts.verbose, log);
+	
+	//Free the feeditems
+	size_t i = 0;
+	while (feeds[i] != NULL) {
+		free(feeds[i]->tag);
+		free(feeds[i]->url);
+		free(feeds[i]);
+		i++;
+	}
 	
 	//Close the log file, we're done
 	fclose(log);

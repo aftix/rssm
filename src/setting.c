@@ -6,6 +6,7 @@
 #include <argp.h>
 #include <math.h>
 #include "setting.h"
+#include "rssmio.h"
 
 //Parse an argument into a rssm_option struct
 error_t parseArg(int key, char* arg, struct argp_state *state) {
@@ -164,4 +165,116 @@ char* getLogPath(const rssm_options *opts, int v) {
 	free(home);
 	
 	return ret;
+}
+
+rssm_feeditem** getFeeds(FILE* list, int v, FILE* log) {
+	rssm_feeditem** items = malloc(sizeof(rssm_feeditem *) * 2);
+	items[0] = malloc(sizeof(rssm_feeditem));
+	items[1] = NULL;
+	
+	//Read through the file by character
+	int ch;
+	int last = '\0';
+	char* curr = malloc(sizeof(char));
+	curr[0]    = '\0';
+	size_t item = 0;
+	unsigned char inComment = 0;
+	unsigned char inQuote   = 0;
+	unsigned char escaped   = 0;
+	unsigned char tag       = 1;
+	while ((ch = fgetc(list)) != EOF) {
+		//If we see a \ then the next character is escaped; set the flag and continue
+		if (ch == '\\' && !escaped) {
+			escaped = 1;
+			continue;
+		}
+		
+		//If we see a " or ' that is not escaped we toggle the state of a quote and continue, the " doesn't actually get recorded.
+		if ((ch == '"' || ch == '\'') && !escaped) {
+			inQuote = !inQuote;
+			escaped = 0;
+			continue;
+		}
+		
+		//If we see a # not in quotes or not escaped it dumps the current word into memory and sets inComment to 1
+		if (ch == '#' && (!escaped || !inQuote)) {
+			inComment = 1;
+			if (tag) {
+				printtime(log);
+				fprintf(log, "Tag %s has no url, ignoring...\n", curr);
+			} else if (strlen(curr) == 0) {
+				printtime(log);
+				fprintf(log, "Tag %s has no url, ignoring...\n", items[item]->tag);
+				free(items[item]->tag);
+			} else {
+				items[item]->url = malloc(sizeof(char) * (strlen(curr) + 1));
+				strcpy(items[item]->url, curr);
+				free(curr);
+				curr    = malloc(sizeof(char));
+				curr[0] = '\0';
+				item++;
+				
+				items         = realloc(items, sizeof(rssm_feeditem *) * (item + 2));
+				items[item]   = malloc(sizeof(rssm_feeditem));
+				items[item+1] = NULL;
+			}
+		}
+		
+		//On newline we reset comments and dump current word
+		if (ch == '\n') {
+			inComment = 0;
+			inQuote = 0;
+			escaped = 0;
+			if (strlen(curr) != 0 && !tag) {
+				items[item]->url = malloc(sizeof(char) * strlen(curr)+1);
+				strcpy(items[item]->url, curr);
+				free(curr);
+				curr    = malloc(sizeof(char));
+				curr[0] = '\0';
+				item++;
+				
+				items         = realloc(items, sizeof(rssm_feeditem *) * (item + 2));
+				items[item]   = malloc(sizeof(rssm_feeditem));
+				items[item+1] = NULL;
+			} else if (!tag) {
+				printtime(log);
+				fprintf(log, "Tag %s has no url, ignoring...\n", items[item]);
+			}
+			tag = 1;
+		}
+		
+		//On the first space after a tag, dump data 
+		if (tag && last != ' ' && ch == ' ') {
+			tag = 0;
+			if (strlen(curr) != 0) {
+				items[item]->tag = malloc(sizeof(char) * (strlen(curr) + 1));
+				strcpy(items[item]->tag, curr);
+				free(curr);
+				curr   = malloc(sizeof(char));
+				curr[0] = '\0';
+			}
+		}
+		
+		//add everything else to the current word
+		if (ch != ' ' && ch != '\n' && !(ch == '#' && !escaped && !inQuote) && !(ch == '"' && !escaped) && !(ch == '\'' && !escaped) && !inComment) {
+			char* tmp = curr;
+			curr = malloc(sizeof(char) * (strlen(curr) + 2));
+			strcpy(curr, tmp);
+			curr[strlen(tmp)]   = (char)ch;
+			curr[strlen(tmp)+1] = '\0';
+			free(tmp);
+		}
+		
+		last = ch;
+		escaped = 0;
+	}
+	
+	printtime(log);
+	fprintf(log, "Feedlist loaded!\n");
+	
+	//free what we malloc'd on the last \n
+	free(items[item]);
+	items[item] = NULL;
+	
+	return items;
 }
