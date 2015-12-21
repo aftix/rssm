@@ -113,8 +113,92 @@ int main(int argc, char** argv) {
 	//this list will always end with a NULL pointer
 	rssm_feeditem** feeds = getFeeds(feedfile, opts.verbose, log);
 	
-	//Free the feeditems
+	if (opts.verbose) {
+		printtime(log);
+		fprintf(log, "Feedlists read in, setting up directory tree...\n");
+	}
+	//Now we need to setup the directory structure for each tag
+	int stat = makeDir(opts.directory, log, opts.verbose);
+	if (stat < 0) {
+		printtime(log);
+		fprintf(log, "Error creating directory %s. Exiting.\n", opts.directory);
+		fclose(log);
+		
+		size_t i = 0;
+		while (feeds[i] != NULL) {
+			free(feeds[i]->tag);
+			free(feeds[i]->url);
+			free(feeds[i]);
+			i++;
+		}
+		free(feeds);
+		
+		if (strcmp(opts.list, defConf) != 0)
+			free(opts.list);
+		if (strcmp(opts.directory, defDir) != 0)
+			free(opts.directory);
+		if (strcmp(opts.log, defLog) != 0)
+			free(opts.log);
+		free(defConf);
+		free(defDir);
+		free(defLog);
+		return 0;
+	}
+	
+	if (opts.verbose) {
+		printtime(log);
+		fprintf(log, "Directory %s is now useable for us!\n", opts.directory);
+	}
+	
+	if (opts.verbose) {
+		printtime(log);
+		fprintf(log, "Making the tag fifo's...\n");
+	}
+	
+	//Now we make a fifo for each tag we have
 	size_t i = 0;
+	while (feeds[i] != NULL) {
+		char* tagPath = malloc(sizeof(char) * (strlen(opts.directory) + strlen(feeds[i]->tag) + 2));
+		strcpy(tagPath, opts.directory);
+		strcat(tagPath, "/");
+		strcat(tagPath, feeds[i]->tag);
+		if (opts.verbose) {
+			printtime(log);
+			fprintf(log, "Making %s fifo\n", tagPath);
+		}
+		stat = makeFifo(tagPath, log, opts.verbose);
+		if (stat < 0) {
+			fclose(log);
+			free(tagPath);
+			
+			size_t j = 0;
+			while (feeds[j] != NULL) {
+				free(feeds[j]->tag);
+				free(feeds[j]->url);
+				free(feeds[j]);
+				j++;
+			}
+			free(feeds);
+			
+			if (strcmp(opts.list, defConf) != 0)
+				free(opts.list);
+			if (strcmp(opts.directory, defDir) != 0)
+				free(opts.directory);
+			if (strcmp(opts.log, defLog) != 0)
+				free(opts.log);
+			free(defConf);
+			free(defDir);
+			free(defLog);
+			
+			return 0;
+		}
+		
+		free(tagPath);
+		i++;
+	}
+	
+	//Free the feeditems
+	i = 0;
 	while (feeds[i] != NULL) {
 		free(feeds[i]->tag);
 		free(feeds[i]->url);
