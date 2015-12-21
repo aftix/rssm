@@ -49,7 +49,7 @@ char* getHomePath(int v);
 char* getLogPath(const rssm_options *opts, int v);
 
 //Read in feedlists from a file
-rssm_feeditem** getFeeds(FILE* list, int v, FILE* log);
+rssm_feeditem** getFeeds(FILE* list, FILE* log, int v);
 
 #ifdef MAIN_FILE
 //Tells argp what is what

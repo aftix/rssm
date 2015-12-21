@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
 	FILE* feedfile = fopen(opts.list, "r");
 	//List of feed items, currently NULL
 	//this list will always end with a NULL pointer
-	rssm_feeditem** feeds = getFeeds(feedfile, opts.verbose, log);
+	rssm_feeditem** feeds = getFeeds(feedfile, log, opts.verbose);
 	
 	if (opts.verbose) {
 		printtime(log);
@@ -196,6 +196,8 @@ int main(int argc, char** argv) {
 		free(tagPath);
 		i++;
 	}
+	
+	getNewRss(feeds[0], log, opts.verbose);
 	
 	//Free the feeditems
 	i = 0;

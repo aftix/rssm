@@ -167,7 +167,7 @@ char* getLogPath(const rssm_options *opts, int v) {
 	return ret;
 }
 
-rssm_feeditem** getFeeds(FILE* list, int v, FILE* log) {
+rssm_feeditem** getFeeds(FILE* list, FILE* log, int v) {
 	rssm_feeditem** items = malloc(sizeof(rssm_feeditem *) * 2);
 	items[0] = malloc(sizeof(rssm_feeditem));
 	items[1] = NULL;
