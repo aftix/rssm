@@ -408,6 +408,12 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 	int neededBytes = getBytes(reply);
 	int hasBytes    = contentBytes(reply);
 	
+	//make reply sufficently large
+	if (neededBytes + alreadyRead > REPLY_SIZE) {
+		reply = realloc(reply, neededBytes + alreadyRead);
+		memset(reply + alreadyRead + 1, 0, sizeof(char)*(neededBytes + alreadyRead - REPLY_SIZE));
+	}
+	
 	if (neededBytes < 0 || hasBytes < 0) {
 		printtime(log);
 		fprintf(log, "Error parsing http header from %s .\n", feed->url);
@@ -418,7 +424,7 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 	
 	fcntl(socketDesc, F_SETFL, O_NONBLOCK);
 	while (hasBytes < neededBytes) {
-		rd = recv(socketDesc, reply + alreadyRead, REPLY_SIZE - alreadyRead - 1, 0);
+		rd = recv(socketDesc, reply + alreadyRead, (sizeof reply) - alreadyRead - 1, 0);
 		if (rd < 0) {
 			switch (errno) {
 				case EINTR:
