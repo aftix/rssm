@@ -3,6 +3,8 @@
 
 #include "setting.h"
 
+#define REPLY_SIZE 4096
+
 //Prints the time to the file in the format [%H:%M:%S]
 //returns the same as fprintf
 int printtime(FILE* f);

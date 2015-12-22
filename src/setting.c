@@ -238,7 +238,7 @@ rssm_feeditem** getFeeds(FILE* list, FILE* log, int v) {
 				items[item+1] = NULL;
 			} else if (!tag) {
 				printtime(log);
-				fprintf(log, "Tag %s has no url, ignoring...\n", items[item]);
+				fprintf(log, "Tag %s has no url, ignoring...\n", items[item]->tag);
 			}
 			tag = 1;
 		}

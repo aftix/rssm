@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-Iinclude/ -c -ggdb -DVERBOSE=1
+CFLAGS=-Iinclude/ -c -ggdb -DVERBOSE=1 -Wall -pedantic
 LFLAGS=-ggdb -lm
 
 OBJ=obj

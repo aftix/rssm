@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <time.h>
+#include <fcntl.h>
 #include <string.h>
 #include <netdb.h>
 #include <sys/types.h>
@@ -116,17 +117,14 @@ static int getPort(const char* url) {
 	//Now we get the port until the end by incrementing pos (to pass over :) and waiting until we see a \0
 	//length of url - our position + 1 = how many chars are left
 	char buffer[strlen(url) - pos  + 1];
+	memset(buffer, 0, sizeof(char) * (strlen(url) - pos + 1));
+	
 	size_t i = 0;
-	while (url[pos] != '\0') {
+	//The string can end with a \0 or a /, as something could be like google.com:80/, test.com/blah.html:80/
+	while (url[pos] != '\0' && url[pos] != '/') {
 		buffer[i] = url[pos];
 		i++;
 		pos++;
-	}
-	buffer[i] = '\0';
-	
-	//The port number may have a '/' at the end. We need to remove that
-	if (buffer[i-1] == '/') {
-		buffer[i-1] == '\0';
 	}
 	
 	//Now we atoi
@@ -271,6 +269,58 @@ static char* httpGetForUrl(const char* url) {
 	return ret;
 }
 
+//Gets the length of the content from http response
+static int getBytes(const char* resp) {
+	//what we're looking for
+	char* checkFor = "Content-Length: ";
+	
+	size_t i = 0;
+	//Go through string
+	while (resp[i] != '\0') {
+		//If the character is a 'C' we need to check if we have a match on checkFor
+		//The if statement only evaluates the right if [i] is 'C'
+		if (resp[i] == 'C' && strncmp(resp+i, checkFor, strlen(checkFor)) == 0) {
+			//Ok, we have a match. Time to get the number from this
+			//First we set the index to the end of checkFor
+			i += strlen(checkFor);
+			if (resp[i] == '\0' || resp[i] == '\r' || resp[i] == '\n')
+				return -1;
+			//the length can be reasonable contained by 127 digits
+			char buffer[128];
+			memset(buffer, 0, sizeof(char) * 128);
+			
+			size_t j = 0;
+			while (resp[i] != '\0' && resp[i] != '\r' && resp[i] != '\n') {
+				buffer[j] = resp[i];
+				i++;
+				j++;
+			}
+			
+			//buffer is now the number
+			//return it converted to an int
+			return atoi(buffer);
+		}
+		i++;
+	}
+	
+	//failure
+	return -1;
+}
+
+//gets the number of bytes a message has - the header
+static int contentBytes(const char* resp) {
+	size_t i = 0;
+	
+	while (resp[i] != '\0') {
+		if (strncmp(resp+i, "\r\n\r\n", 4) == 0) 
+		//if (resp[i] == '\n' && resp[i-1] == '\r' && resp[i-2] == '\n' & resp[i-3] == '\r')
+			break;
+		i++;
+	}
+
+	return sizeof(char) * (strlen(resp) - i - 1);
+}
+
 //This does the work of getting all the new rss stuff
 void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 	//get a descriptor for a socket
@@ -334,8 +384,56 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 	}
 	
 	//Get reply
-	char* reply = malloc(sizeof(char) * 2048);
-	if (recv(socketDesc, reply, 2048, 0) < 0) {
+	//Since it's http the data will end with a \r\n, so check for that
+	char* reply = malloc(sizeof(char) * REPLY_SIZE);
+	memset(reply, 0, sizeof(char) * REPLY_SIZE);
+	size_t alreadyRead = 0;
+	
+	//Get initial part (header)
+	int rd = recv(socketDesc, reply, REPLY_SIZE - 1, 0);
+	if (rd < 0) {
+		printtime(log);
+		fprintf(log, "Error reading http response from %s .\n", feed->url);
+		close(socketDesc);
+		free(reply);
+		return;
+	}
+	alreadyRead = rd;
+	
+	if (v) {
+		printtime(log);
+		fprintf(log, "Recieving http respnse...\n");
+	}
+	
+	int neededBytes = getBytes(reply);
+	int hasBytes    = contentBytes(reply);
+	
+	if (neededBytes < 0 || hasBytes < 0) {
+		printtime(log);
+		fprintf(log, "Error parsing http header from %s .\n", feed->url);
+		close(socketDesc);
+		free(reply);
+		return;
+	}
+	
+	fcntl(socketDesc, F_SETFL, O_NONBLOCK);
+	while (hasBytes < neededBytes) {
+		rd = recv(socketDesc, reply + alreadyRead, REPLY_SIZE - alreadyRead - 1, 0);
+		if (rd < 0) {
+			switch (errno) {
+				case EINTR:
+				case EAGAIN:
+					continue;
+			}
+			alreadyRead = -1;
+			break;
+		}
+		
+		alreadyRead += rd;
+		hasBytes    += rd;
+	}
+	
+	if (alreadyRead < 0) {
 		free(reply);
 		printtime(log);
 		fprintf(log, "Error recieving message from %s .\n", feed->url);
