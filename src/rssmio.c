@@ -350,7 +350,7 @@ static int contains(FILE *f, const char* search) {
 }
 
 //This does the work of getting all the new rss stuff
-void  getNewRss(const rssm_feeditem* feed, const char* dir, FILE* log, int v) {
+void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 	//get a descriptor for a socket
 	int socketDesc = socket(AF_INET, SOCK_STREAM, 0);
 	if (socketDesc < 0) {
@@ -542,6 +542,10 @@ void  getNewRss(const rssm_feeditem* feed, const char* dir, FILE* log, int v) {
 		free(xmlStr);
 		return;
 	} else {
+		if (v) {
+			printtime(log);
+			fprintf(log, "Description data found!\n");
+		}
 		channelElem = channel->children;
 		while (strcmp((char *)channelElem->name, "item") != 0) {
 			//Check if the desc file contains the exact data we've found
@@ -560,6 +564,11 @@ void  getNewRss(const rssm_feeditem* feed, const char* dir, FILE* log, int v) {
 		
 			channelElem = channelElem->next;
 		}
+	}
+	
+	if (v) {
+		printtime(log);
+		fprintf(log, "Getting items for %s ...\n", feed->tag);
 	}
 	
 	//The top item of the rss feed is the newest. We want to add the items to the fifo oldest first, so we start at the last element
@@ -601,6 +610,11 @@ void  getNewRss(const rssm_feeditem* feed, const char* dir, FILE* log, int v) {
 		}
 		
 		channelElem = channelElem->prev;
+	}
+	
+	if (v) {
+		printtime(log);
+		fprintf(log, "Done reading rss data for %s .\n", feed->tag);
 	}
 	
 	xmlFreeDoc(xmlDoc);

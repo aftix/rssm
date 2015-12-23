@@ -17,13 +17,14 @@ struct argp_option options[] = {
 	{"directory", 'd', "DIR",  0, "Specify directory to place rss data into"},
 	{"logfile",   'l', "FILE", 0, "Specify path for rssm to log"},
 	{"nodaemon",  'D', 0,      0, "Don't run as a daemon (logs to stdout)"},
+	{"checks",    'c', "MINS", 0, "Set the number of minutes between rss feed checks (default is 5)"},
 	{ 0 }
 };
 #endif //MAIN_FILE
 
 //Contain all the options of rssm
 struct __options {
-	int verbose, daemon;
+	int verbose, daemon, mins;
 	char* list;
 	char* directory;
 	char* log;
@@ -52,6 +53,10 @@ char* getLogPath(const rssm_options *opts, int v);
 
 //Read in feedlists from a file
 rssm_feeditem** getFeeds(FILE* list, FILE* log, int v);
+
+//Check lock file
+//returns pid if it exists, 0 if it doesn't, and -1 if it can't create a new one
+int checkLock(const char* path);
 
 #ifdef MAIN_FILE
 //Tells argp what is what

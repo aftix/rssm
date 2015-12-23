@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <fcntl.h>
+#include <signal.h>
 #include <string.h>
 #define MAIN_FILE
 #include "setting.h"
@@ -11,6 +11,8 @@
 #ifndef VERBOSE
 #define VERBOSE 0
 #endif
+
+int loop = 1;
 
 //Free up the memory and close the log
 static void freeMem(rssm_options *opts, rssm_feeditem** feeds, FILE* log) {
@@ -42,12 +44,26 @@ static void freeMem(rssm_options *opts, rssm_feeditem** feeds, FILE* log) {
 		fclose(log);
 }
 
+static void smartSleep(int secs) {
+	if (secs == 0)
+		secs = 300;
+	;
+	size_t i = 0;
+	while (loop && i < secs) {
+		sleep(1);
+		i++;
+	}
+}
+
+void handleTerm(int signo, siginfo_t *sinfo, void *context);
+
 int main(int argc, char** argv) {
 	//default configuration
 	rssm_options opts;
 	//default is set at compile time
 	opts.verbose = VERBOSE;
 	opts.daemon  = 1;
+	opts.mins    = 5;
 	
 	//Get the config path of $HOME/.config/ through all means avaliable
 	char* configPath = getConfigPath(opts.verbose);
@@ -75,6 +91,27 @@ int main(int argc, char** argv) {
 	
 	//Parse arguements
 	argp_parse(&argp, argc, argv, 0, 0, &opts);
+	
+	//Check the lockfile
+	int pid = checkLock("/tmp/rssm.lock");
+	if (pid > 0) {
+		printf("Error! There is another instance running with pid %d . Only one rssm can be run at a time.\n", pid);
+		return -1;
+	} else if (pid == -1) {
+		printf("Error! Lock file can not be created. Exiting.\n");
+		return -1;
+	}
+	
+	//setup the sigterm handler
+	struct sigaction act;
+	memset(&act, 0, sizeof(struct sigaction));
+	act.sa_sigaction = handleTerm;
+	act.sa_flags = SA_SIGINFO;
+	
+	if (sigaction(SIGTERM, &act, NULL) == -1) {
+		printf("Error on sigaction!\n");
+		return -1;
+	}
 	
 	//Verbose messaging
 	if (opts.verbose)
@@ -231,13 +268,39 @@ int main(int argc, char** argv) {
 		i++;
 	}
 	
-	//test
-	getNewRss(feeds[0], opts.directory, log, opts.verbose);
+	//Loop for continously checking the rss feeds
+	while (loop) {
+		//getNewRss each feed
+		size_t i = 0;
+		while (feeds[i] != NULL) {
+			if (opts.verbose) {
+				printtime(log);
+				fprintf(log, "Checking rss feed %s for new items.\n", feeds[i]->tag);
+			}
+			getNewRss(feeds[i], log, opts.verbose);
+			i++;
+		}
+		
+		if (opts.verbose) {
+			printtime(log);
+			fprintf(log, "Going to sleep for %d mins...\n", opts.mins);
+		}
+		fflush(log);
+		//A smart sleep function that will exit within 1 sec of loop being set to 0
+		smartSleep(opts.mins * 60);
+	}
 	
 	//Clean up
 	printtime(log);
 	fprintf(log, "Cleaning up everything to close...\n");
 	
 	freeMem(&opts, feeds, log);
+	//remove lock file
+	remove("/tmp/rssm.lock");
 	return 0;
+}
+
+//Handle a sigterm
+void handleTerm(int signo, siginfo_t *sinfo, void *context) {
+	loop = 0;
 }

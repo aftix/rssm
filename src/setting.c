@@ -33,6 +33,9 @@ error_t parseArg(int key, char* arg, struct argp_state *state) {
 		case 'D':
 			opts->daemon = 0;
 			break;
+		case 'c':
+			opts->mins = atoi(arg);
+			break;
 		case ARGP_KEY_END:
 			break;
 		default:
@@ -306,4 +309,30 @@ rssm_feeditem** getFeeds(FILE* list, FILE* log, int v) {
 	items[item] = NULL;
 	
 	return items;
+}
+
+//checks lock file
+int checkLock(const char* path) {
+	//Does it exist?	
+	if (access(path, F_OK) == 0 && access(path, R_OK) == 0) {
+		//Read the first line out of the file
+		FILE* lock = fopen(path, "r");
+		char line[256];
+		memset(line, 0, 256);
+		char* ret = fgets(line, 255, lock);
+		fclose(lock);
+		
+		if (ret == NULL)
+			return -1;
+		
+		return atoi(line);
+	}
+	
+	//Create it and write our pid
+	FILE* lock = fopen(path, "w");
+	if (lock == NULL)
+		return -1;
+	fprintf(lock, "%d\n", getpid());
+	fclose(lock);
+	return 0;
 }
