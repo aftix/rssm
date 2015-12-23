@@ -12,33 +12,66 @@
 #define VERBOSE 0
 #endif
 
+//Free up the memory and close the log
+static void freeMem(rssm_options *opts, rssm_feeditem** feeds, FILE* log) {
+	if (opts->directory != NULL)
+		free(opts->directory);
+	if (opts->list != NULL)
+		free(opts->list);
+	if (opts->log != NULL)
+		free(opts->log);
+	
+	if (feeds != NULL) {
+		size_t i = 0;
+		while (feeds[i] != NULL) {
+			if (feeds[i]->tag != NULL)
+				free(feeds[i]->tag);
+			if (feeds[i]->url != NULL)
+				free(feeds[i]->url);
+			if (feeds[i]->desc != NULL)
+				fclose(feeds[i]->desc);
+			if (feeds[i]->out != NULL)
+				fclose(feeds[i]->out);
+			free(feeds[i]);
+			i++;
+		}
+		free(feeds);
+	}
+	
+	if (log != NULL)
+		fclose(log);
+}
+
 int main(int argc, char** argv) {
 	//default configuration
 	rssm_options opts;
 	//default is set at compile time
 	opts.verbose = VERBOSE;
+	opts.daemon  = 1;
+	
 	//Get the config path of $HOME/.config/ through all means avaliable
 	char* configPath = getConfigPath(opts.verbose);
+	
 	//Allocate enough memory for defConf to be the length of the configPath + the length of "rssm.conf"
-	char* defConf = malloc(sizeof(char) * (strlen(configPath) + 10));
-	strcpy(defConf, configPath);
-	strcat(defConf, "rssm.conf");
-	opts.list = defConf;
+	opts.list = malloc(sizeof(char) * (strlen(configPath) + 10));
+	strcpy(opts.list, configPath);
+	strcat(opts.list, "rssm.conf");
+	
 	//Get the $HOME
 	char* homePath = getHomePath(opts.verbose);
 	//length of homePath + "rss"
-	char* defDir   = malloc(sizeof(char) * (strlen(homePath) + 4));
-	strcpy(defDir, homePath);
-	strcat(defDir, "rss");
-	opts.directory = defDir;
+	opts.directory = malloc(sizeof(char) * (strlen(homePath) + 4));
+	strcpy(opts.directory, homePath);
+	strcat(opts.directory, "rss");
+	
 	//default log file is $HOME/.rssmlog
-	char* defLog = malloc(sizeof(char) * (strlen(homePath) + 9));
-	strcpy(defLog, homePath);
-	strcat(defLog, ".rssmlog");
-	opts.log = defLog;
+	opts.log = malloc(sizeof(char) * (strlen(homePath) + 9));
+	strcpy(opts.log, homePath);
+	strcat(opts.log, ".rssmlog");
 	
 	//free the home path, we don't need it anymore
 	free(homePath);
+	free(configPath);
 	
 	//Parse arguements
 	argp_parse(&argp, argc, argv, 0, 0, &opts);
@@ -64,14 +97,19 @@ int main(int argc, char** argv) {
 		free(logPath);
 	}
 	
-	//Daemonize!
-	//We don't need the comm pipes - the child will set those up later
-	pid_t thisPid = makeChild(NULL, NULL, NULL, opts.verbose);
-	//If we are not the child, exit
-	if (thisPid != 0) {
-		if (opts.verbose)
-			printf("Parent process exiting, child to continue in log\n");
-		return 0;
+	if (opts.daemon) {
+		//Daemonize!
+		//We don't need the comm pipes - the child will set those up later
+		pid_t thisPid = makeChild(NULL, NULL, NULL, opts.verbose);
+		//If we are not the child, exit
+		if (thisPid != 0) {
+			if (opts.verbose)
+				printf("Parent process exiting, child to continue in log\n");
+			return 0;
+		}
+	} else {
+		fclose(log);
+		log = stdout;
 	}
 	
 	//Now we are in daemon mode. 
@@ -80,7 +118,14 @@ int main(int argc, char** argv) {
 		printtime(log);
 		fprintf(log, "Changing to /\n");
 	}
-	chdir("/");
+	if (chdir("/") < 0) {
+		printtime(log);
+		fprintf(log, "Error changing directory to / . This should never happen.\n");
+		
+		freeMem(&opts, NULL, log);
+		return 0;
+	}
+
 	
 	//Read the feedlist - the default file was already taken care of. If we can't access what's in opts.list we just log and exit
 	//Since an empty feedlist file means rssm will do nothing, no check for writability on the path is needed. If the file isn't there, there is nothing to do so rssm exits, regardless of if the path is writable.
@@ -91,16 +136,8 @@ int main(int argc, char** argv) {
 	if (access(opts.list, R_OK) != 0) {
 		printtime(log);
 		fprintf(log, "Can not read the feed configuration file of %s. Exiting.", opts.list);
-		fclose(log);
-		if (strcmp(opts.list, defConf) != 0)
-			free(opts.list);
-		if (strcmp(opts.directory, defDir) != 0)
-			free(opts.directory);
-		if (strcmp(opts.log, defLog) !=0)
-			free(opts.log);
-		free(defConf);
-		free(defDir);
-		free(defLog);
+		
+		freeMem(&opts, NULL, log);
 		return 0;
 	}
 	if (opts.verbose) {
@@ -122,26 +159,8 @@ int main(int argc, char** argv) {
 	if (stat < 0) {
 		printtime(log);
 		fprintf(log, "Error creating directory %s. Exiting.\n", opts.directory);
-		fclose(log);
 		
-		size_t i = 0;
-		while (feeds[i] != NULL) {
-			free(feeds[i]->tag);
-			free(feeds[i]->url);
-			free(feeds[i]);
-			i++;
-		}
-		free(feeds);
-		
-		if (strcmp(opts.list, defConf) != 0)
-			free(opts.list);
-		if (strcmp(opts.directory, defDir) != 0)
-			free(opts.directory);
-		if (strcmp(opts.log, defLog) != 0)
-			free(opts.log);
-		free(defConf);
-		free(defDir);
-		free(defLog);
+		freeMem(&opts, feeds, log);
 		return 0;
 	}
 	
@@ -166,60 +185,59 @@ int main(int argc, char** argv) {
 			printtime(log);
 			fprintf(log, "Making %s fifo\n", tagPath);
 		}
-		stat = makeFifo(tagPath, log, opts.verbose);
+		stat = makeFile(tagPath, log, opts.verbose);
 		if (stat < 0) {
-			fclose(log);
 			free(tagPath);
 			
-			size_t j = 0;
-			while (feeds[j] != NULL) {
-				free(feeds[j]->tag);
-				free(feeds[j]->url);
-				free(feeds[j]);
-				j++;
-			}
-			free(feeds);
-			
-			if (strcmp(opts.list, defConf) != 0)
-				free(opts.list);
-			if (strcmp(opts.directory, defDir) != 0)
-				free(opts.directory);
-			if (strcmp(opts.log, defLog) != 0)
-				free(opts.log);
-			free(defConf);
-			free(defDir);
-			free(defLog);
-			
+			freeMem(&opts, feeds, log);
 			return 0;
 		}
 		
+		feeds[i]->out = fopen(tagPath, "a+");
+		if (feeds[i]->out == NULL) {
+			printtime(log);
+			fprintf(log, "Error opening fifod for %s . Exiting.\n", feeds[i]->tag);
+			free(tagPath);
+			
+			freeMem(&opts, feeds, log);
+			return 0;
+		}
+		
+		char* descPath  = malloc(sizeof(char) * (strlen(tagPath) + 5));
+		strcpy(descPath, tagPath);
+		strcat(descPath, " desc");
+		
+		stat = makeFile(descPath, log, opts.verbose);
+		if (stat < 0) {
+			free(tagPath);
+			free(descPath);
+			
+			freeMem(&opts, feeds, log);
+			return 0;
+		}
+		feeds[i]->desc = fopen(descPath, "a+");
+		if (feeds[i]->desc == NULL) {
+			printtime(log);
+			fprintf(log, "Error opening fifo for tag desc %s . Exiting.\n", feeds[i]->tag);
+			free(tagPath);
+			free(descPath);
+			
+			freeMem(&opts, feeds, log);
+			return 0;
+		}
+		
+		free(descPath);
 		free(tagPath);
 		i++;
 	}
 	
-	getNewRss(feeds[0], log, opts.verbose);
+	//test
+	getNewRss(feeds[0], opts.directory, log, opts.verbose);
 	
-	//Free the feeditems
-	i = 0;
-	while (feeds[i] != NULL) {
-		free(feeds[i]->tag);
-		free(feeds[i]->url);
-		free(feeds[i]);
-		i++;
-	}
+	//Clean up
+	printtime(log);
+	fprintf(log, "Cleaning up everything to close...\n");
 	
-	//Close the log file, we're done
-	fclose(log);
-	
-	//If opt's char*'s are different, free them
-	if (strcmp(opts.list, defConf) != 0)
-		free(opts.list);
-	if (strcmp(opts.directory, defDir) != 0)
-		free(opts.directory);
-	if (strcmp(opts.log, defLog) != 0)
-		free(opts.log);
-	free(defConf);
-	free(defDir);
-	free(defLog);
+	freeMem(&opts, feeds, log);
 	return 0;
 }

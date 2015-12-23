@@ -16,13 +16,14 @@ struct argp_option options[] = {
 	{"feedlist",  'f', "FILE", 0, "Specify feedlist file to read from"},
 	{"directory", 'd', "DIR",  0, "Specify directory to place rss data into"},
 	{"logfile",   'l', "FILE", 0, "Specify path for rssm to log"},
+	{"nodaemon",  'D', 0,      0, "Don't run as a daemon (logs to stdout)"},
 	{ 0 }
 };
 #endif //MAIN_FILE
 
 //Contain all the options of rssm
 struct __options {
-	int verbose;
+	int verbose, daemon;
 	char* list;
 	char* directory;
 	char* log;
@@ -33,6 +34,7 @@ typedef struct __options rssm_options;
 struct __feed {
 	char* url;
 	char* tag;
+	FILE *desc, *out;
 };
 typedef struct __feed rssm_feeditem;
 

@@ -1,6 +1,6 @@
 CC=gcc
-CFLAGS=-Iinclude/ -c -ggdb -DVERBOSE=1 -Wall -pedantic
-LFLAGS=-ggdb -lm
+CFLAGS=-Iinclude/ -I/usr/include/libxml2 -c -ggdb -DVERBOSE=1 -Wall -pedantic -O2
+LFLAGS=-ggdb -lxml2
 
 OBJ=obj
 BIN=bin

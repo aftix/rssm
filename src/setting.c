@@ -30,6 +30,9 @@ error_t parseArg(int key, char* arg, struct argp_state *state) {
 			opts->log = malloc(sizeof(char) * (strlen(arg) + 1));
 			strcpy(opts->log, arg);
 			break;
+		case 'D':
+			opts->daemon = 0;
+			break;
 		case ARGP_KEY_END:
 			break;
 		default:
@@ -43,6 +46,7 @@ error_t parseArg(int key, char* arg, struct argp_state *state) {
 char* getConfigPath(int v) {
 	if (v)
 		printf("Trying to get path from $XDG_CONFIG_HOME...\n");
+	
 	//Try getting it directly 
 	char* ret = getenv("XDG_CONFIG_HOME");
 	if (ret != NULL) {
@@ -57,6 +61,7 @@ char* getConfigPath(int v) {
 	//If that didn't work try getting it from $HOME and concating .config
 	if (v)
 		printf("$XDG_CONFIG_HOME failed.\nTrying $HOME...\n");
+	
 	ret = getenv("HOME");
 	if (ret != NULL) {
 		if (v)
@@ -85,10 +90,11 @@ char* getConfigPath(int v) {
 	//just use /
 	if (v)
 		printf("pwd.h failed.\nDefaulting to /\n");
+	
 	free(pw);
+	
 	ret = malloc(sizeof(char)*2);
-	ret[0] = '/';
-	ret[1] = '\0';
+	strcpy(ret, "/");
 	return ret;
 }
 
@@ -96,6 +102,7 @@ char* getConfigPath(int v) {
 char* getHomePath(int v) {
 	if (v)
 		printf("Trying to get home path from $HOME.\n");
+	
 	//try getenv
 	char* ret = getenv("HOME");
 	if (ret != NULL) {
@@ -109,6 +116,7 @@ char* getHomePath(int v) {
 	
 	if (v)
 		printf("$HOME failed.\nTrying to use pwd.h ...\n");
+	
 	//try a passwd struct
 	struct passwd *pw = getpwuid(getuid());
 	if (pw->pw_dir != NULL) {
@@ -123,11 +131,13 @@ char* getHomePath(int v) {
 	
 	if (v)
 		printf("pwd.h failed, defaulting to /\n");
+	
 	//just use /
 	free(pw);
+	
 	ret = malloc(sizeof(char)*2);
-	ret[0] = '/';
-	ret[1] = '\0';
+	strcpy(ret, "/");
+	
 	return ret;
 }
 
@@ -168,20 +178,22 @@ char* getLogPath(const rssm_options *opts, int v) {
 }
 
 rssm_feeditem** getFeeds(FILE* list, FILE* log, int v) {
+	//allocate the list of feed item pointers
 	rssm_feeditem** items = malloc(sizeof(rssm_feeditem *) * 2);
+	//Pre-allocate the first element, set last one to NULL
 	items[0] = malloc(sizeof(rssm_feeditem));
 	items[1] = NULL;
 	
 	//Read through the file by character
-	int ch;
-	int last = '\0';
-	char* curr = malloc(sizeof(char));
+	int ch; //Character read
+	int last = '\0'; //Last character read
+	char* curr = malloc(sizeof(char)); //Stores the word currently being read
 	curr[0]    = '\0';
-	size_t item = 0;
-	unsigned char inComment = 0;
-	unsigned char inQuote   = 0;
-	unsigned char escaped   = 0;
-	unsigned char tag       = 1;
+	size_t item = 0; //index for storing feed items
+	unsigned char inComment = 0; //flag for if we're in a comment
+	unsigned char inQuote   = 0; //flag for if we're in a quote
+	unsigned char escaped   = 0; //flag for if this character is escaped. Reset after reading in 1 more character
+	unsigned char tag       = 1; //flag to tell if we're reading in the tag or the url
 	while ((ch = fgetc(list)) != EOF) {
 		//If we see a \ then the next character is escaped; set the flag and continue
 		if (ch == '\\' && !escaped) {
@@ -197,50 +209,65 @@ rssm_feeditem** getFeeds(FILE* list, FILE* log, int v) {
 		}
 		
 		//If we see a # not in quotes or not escaped it dumps the current word into memory and sets inComment to 1
-		if (ch == '#' && (!escaped || !inQuote)) {
-			inComment = 1;
+		if (ch == '#' && !escaped && !inQuote) {
+			inComment = 1; //Make sure comment flag is one
+			
+			//If we were reading a tag when the comment started, then drop the tag because it has no url
 			if (tag) {
 				printtime(log);
 				fprintf(log, "Tag %s has no url, ignoring...\n", curr);
+			//If we had nothing in the url, i.e. storing into url but no characters had been read, drop the tag by freeing it (since we're on url it'd of been dumped to memory)
 			} else if (strlen(curr) == 0) {
 				printtime(log);
 				fprintf(log, "Tag %s has no url, ignoring...\n", items[item]->tag);
 				free(items[item]->tag);
+			//Dump the tag and the url into memory if we had both when the comment started
 			} else {
+				//Allocate space for the url, which we're dumping
 				items[item]->url = malloc(sizeof(char) * (strlen(curr) + 1));
 				strcpy(items[item]->url, curr);
+				
 				free(curr);
 				curr    = malloc(sizeof(char));
 				curr[0] = '\0';
 				item++;
 				
-				items         = realloc(items, sizeof(rssm_feeditem *) * (item + 2));
-				items[item]   = malloc(sizeof(rssm_feeditem));
-				items[item+1] = NULL;
+				//Reallocate items to add one more to the end
+				items             = realloc(items, sizeof(rssm_feeditem *) * (item + 2));
+				items[item]       = malloc(sizeof(rssm_feeditem));
+				items[item]->desc = NULL;
+				items[item]->out  = NULL;
+				items[item+1]     = NULL;
 			}
 		}
 		
 		//On newline we reset comments and dump current word
 		if (ch == '\n') {
-			inComment = 0;
-			inQuote = 0;
-			escaped = 0;
+			inComment = 0; //set comment to false
+			inQuote = 0;   //set quote to false
+			escaped = 0;   //set escape to false
+			
+			//If we had a url that was longer than 0
 			if (strlen(curr) != 0 && !tag) {
 				items[item]->url = malloc(sizeof(char) * strlen(curr)+1);
 				strcpy(items[item]->url, curr);
+				
 				free(curr);
 				curr    = malloc(sizeof(char));
 				curr[0] = '\0';
 				item++;
 				
-				items         = realloc(items, sizeof(rssm_feeditem *) * (item + 2));
-				items[item]   = malloc(sizeof(rssm_feeditem));
-				items[item+1] = NULL;
+				items             = realloc(items, sizeof(rssm_feeditem *) * (item + 2));
+				items[item]       = malloc(sizeof(rssm_feeditem));
+				items[item]->desc = NULL;
+				items[item]->out  = NULL;
+				items[item+1]     = NULL;
+			//If we had no url
 			} else if (!tag) {
 				printtime(log);
 				fprintf(log, "Tag %s has no url, ignoring...\n", items[item]->tag);
-			}
-			tag = 1;
+			}//Other option is that we were on the tag. In that case we have no memory to print an error message
+			tag = 1; //the start of the next line will be a tag
 		}
 		
 		//On the first space after a tag, dump data 
@@ -249,6 +276,7 @@ rssm_feeditem** getFeeds(FILE* list, FILE* log, int v) {
 			if (strlen(curr) != 0) {
 				items[item]->tag = malloc(sizeof(char) * (strlen(curr) + 1));
 				strcpy(items[item]->tag, curr);
+				
 				free(curr);
 				curr   = malloc(sizeof(char));
 				curr[0] = '\0';
@@ -257,16 +285,17 @@ rssm_feeditem** getFeeds(FILE* list, FILE* log, int v) {
 		
 		//add everything else to the current word
 		if (ch != ' ' && ch != '\n' && !(ch == '#' && !escaped && !inQuote) && !(ch == '"' && !escaped) && !(ch == '\'' && !escaped) && !inComment) {
-			char* tmp = curr;
-			curr = malloc(sizeof(char) * (strlen(curr) + 2));
-			strcpy(curr, tmp);
-			curr[strlen(tmp)]   = (char)ch;
+			char* tmp = curr; //Tmp is what we had before
+			curr = malloc(sizeof(char) * (strlen(curr) + 2)); //Make curr big enough to hold 1 more char
+			strcpy(curr, tmp); //Copy the old curr into the new memory
+			curr[strlen(tmp)]   = (char)ch; //add the new ch and \0
 			curr[strlen(tmp)+1] = '\0';
 			free(tmp);
+			//Didn't use realloc because ch is set with strlen(tmp)
 		}
 		
-		last = ch;
-		escaped = 0;
+		last = ch; //set the last char
+		escaped = 0; //reset escaped
 	}
 	
 	printtime(log);

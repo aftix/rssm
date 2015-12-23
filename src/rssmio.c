@@ -8,8 +8,13 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+
+#include <libxml/parser.h>
+#include <libxml/tree.h>
+
 #include "rssmio.h"
 
+//Prints the current time to p, no newline
 int printtime(FILE* p) {
 	//get rawtime
 	time_t rawtime;
@@ -28,6 +33,7 @@ int printtime(FILE* p) {
 	return fprintf(p, "[%s] ", time);
 }
 
+//Ensures a directory exists
 int makeDir(const char* path, FILE* log, int v) {
 	if (v) {
 		printtime(log);
@@ -54,7 +60,8 @@ int makeDir(const char* path, FILE* log, int v) {
 	return mkdir(path, S_IRWXU);
 }
 
-int makeFifo(const char* path, FILE* log, int v) {
+//Ensures a file exists and is not a fifo
+int makeFile(const char* path, FILE* log, int v) {
 	if (v) {
 		printtime(log);
 		fprintf(log, "Checking that fifo %s exists...\n", path);
@@ -70,7 +77,15 @@ int makeFifo(const char* path, FILE* log, int v) {
 			fprintf(log, "%s does not exist, creating!\n", path);
 		}
 		
-		return mkfifo(path, S_IRWXU);
+		FILE* make = fopen(path, "w");
+		if (make == NULL) {
+			printtime(log);
+			fprintf(log, "Error creating file %s . Exiting.\n", path);
+			return -1;
+		}
+		fclose(make);
+		
+		return 0;
 	}
 	
 	//Check if the file is a fifo...
@@ -79,27 +94,36 @@ int makeFifo(const char* path, FILE* log, int v) {
 		fprintf(log, "%s exists! Checking if it is a fifo...\n", path);
 	}
 	
+	//We don't want it to be a fifo
 	if (S_ISFIFO(st.st_mode) ) {
 		if (v) {
 			printtime(log);
-			fprintf(log, "%s is a fifo! Returning...\n", path);
+			fprintf(log, "%s is a fifo! Deleting...\n", path);
 		}
+		
+		if (remove(path) < 0) {
+			printtime(log);
+			fprintf(log, "Error removing fifo file %s . Exiting. \n", path);
+			return -1;
+		}
+		
+		FILE* make = fopen(path, "w");
+		if (make == NULL) {
+			printtime(log);
+			fprintf(log, "Error making file %s . Exiting\n", path);
+			return -1;
+		}
+		fclose(make);
 		
 		return 0;
 	}
 	
 	if (v) {
 		printtime(log);
-		fprintf(log, "%s is not a fifo! Deleting and making it a fifo...\n", path);
+		fprintf(log, "%s is not a fifo! Returning...\n", path);
 	}
 	
-	if (remove(path) < 0) {
-		printtime(log);
-		fprintf(log, "Error removing non-fifo file %s . Exiting.\n", path);
-		return -1;
-	}
-	
-	return mkfifo(path, S_IRWXU);
+	return 0;
 }
 
 //This function gets the port at the tail end of an url, defaults to 80
@@ -154,44 +178,34 @@ static char* getIp(const char* url, int hostOnly) {
 	
 	//We have to get the core of the url - no http://, i.e. www.google.com not http://google.com/#q
 	char core[strlen(portless) + 1];
+	memset(core, 0, sizeof(char) * (strlen(portless) + 1));
+	
 	pos = 0;
 	size_t core_pos = 0;
 	//If the url has http://, ignore that. Check the first 4 chars. We want www. If not, just put it at the front of core
-	if (strncmp(portless, "http://", 7) == 0) {
+	if (strncmp(portless, "http://", sizeof(char) * 7) == 0) {
 		pos = 7;
 		
-		core[0] = 'w';
-		core[1] = 'w';
-		core[2] = 'w';
-		core[3] = '.';
-		core[4] = '\0';
-		core_pos= 4;
+		strcpy(core, "www.");
+		core_pos = 4;
 		
-		if (strncmp(portless, "http://www.", 11) == 0) {
+		if (strncmp(portless, "http://www.", sizeof(char) * 11) == 0) {
 			pos += 4;
 		}
-	} else if (strncmp(portless, "https://", 8) == 0) { 
+	} else if (strncmp(portless, "https://", sizeof(char) * 8) == 0) { 
 		pos = 8;
 		
-		core[0] = 'w';
-		core[1] = 'w';
-		core[2] = 'w';
-		core[3] = '.';
-		core[4] = '\0';
-		core_pos= 4;
+		strcpy(core, "www.");
+		core_pos = 4;
 		
-		if (strncmp(portless, "https://www.", 12) == 0) {
+		if (strncmp(portless, "https://www.", sizeof(char) * 12) == 0) {
 			pos += 4;
 		}
 	} else {
-		core[0] = 'w';
-		core[1] = 'w';
-		core[2] = 'w';
-		core[3] = '.';
-		core[4] = '\0';
-		core_pos= 4;
+		strcpy(core, "www.");
+		core_pos = 4;
 		
-		if (strncmp(portless, "www.", 4) == 0) {
+		if (strncmp(portless, "www.", sizeof(char) * 4) == 0) {
 			pos += 4;
 		}
 	}
@@ -217,7 +231,6 @@ static char* getIp(const char* url, int hostOnly) {
 	ip[0] = '\0';
 	
 	if ((he = gethostbyname(core)) == NULL) {
-		printf("%d\n", h_errno);
 		return malloc(sizeof(char));
 	}
 	
@@ -233,26 +246,25 @@ static char* httpGetForUrl(const char* url) {
 	char* host = getIp(url, 1);
 	
 	size_t pos = 0;
-	if (strncmp(url, "http://", 7) == 0)
+	if (strncmp(url, "http://", sizeof(char) * 7) == 0)
 		pos = 7;
-	else if (strncmp(url, "https://", 8) == 0)
+	else if (strncmp(url, "https://", sizeof(char) * 8) == 0)
 		pos = 8;
 	
 	char urlp[strlen(url)+1];
+	memset(urlp, 0, sizeof(char) * (strlen(url) + 1));
+
 	size_t bpos = strlen(url);
 	//remove port from url
 	while(url[bpos] != ':' && url[bpos] != '.') bpos--;
 	
 	if (url[bpos] == '.')
 		bpos = strlen(url);
-	size_t i;
-	for (i = 0; i < bpos; i++)
-		urlp[i] = url[i];
-	urlp[i] = '\0';
+	
+	strncpy(urlp, url, sizeof(char) * bpos);
 	
 	//Find first / after the https?://, those if statements places starting pos after any https?://
 	while (urlp[pos] != '/' && urlp[pos] != '\0') pos++;
-	
 	
 	//If we have no /'s, then we want to request root
 	if (urlp[pos] == '\0' || pos == strlen(urlp)-1) {
@@ -288,13 +300,8 @@ static int getBytes(const char* resp) {
 			//the length can be reasonable contained by 127 digits
 			char buffer[128];
 			memset(buffer, 0, sizeof(char) * 128);
-			
-			size_t j = 0;
-			while (resp[i] != '\0' && resp[i] != '\r' && resp[i] != '\n') {
-				buffer[j] = resp[i];
-				i++;
-				j++;
-			}
+			//copy at most 127 chars into buffer from resp starting at i 
+			strncpy(buffer, resp + i, sizeof(char)*127);
 			
 			//buffer is now the number
 			//return it converted to an int
@@ -312,8 +319,7 @@ static int contentBytes(const char* resp) {
 	size_t i = 0;
 	
 	while (resp[i] != '\0') {
-		if (strncmp(resp+i, "\r\n\r\n", 4) == 0) 
-		//if (resp[i] == '\n' && resp[i-1] == '\r' && resp[i-2] == '\n' & resp[i-3] == '\r')
+		if (strncmp(resp+i, "\r\n\r\n", sizeof(char) * 4) == 0) 
 			break;
 		i++;
 	}
@@ -321,8 +327,30 @@ static int contentBytes(const char* resp) {
 	return sizeof(char) * (strlen(resp) - i - 1);
 }
 
+//check if fifo on fd contains the search given
+static int contains(FILE *f, const char* search) {
+	//Make sure we start reading from the start of the file every time
+	fseek(f, SEEK_SET, 0);
+	
+	char line[256];
+	//read through fifo line by line looking for search
+	while (fgets(line, 255, f) != NULL) {
+		size_t i = 0;
+		//Since search can start anywhere, we need to check every char
+		while (line[i] != '\0') {
+			//If the char at i is the same as the first char of search, then we strncmp search with line starting at i
+			//The right side only evaluates when the left side is true
+			if (line[i] == search[0] && strncmp(line+i, search, sizeof(char) * strlen(search)) == 0)
+				return 1;
+			i++;
+		}
+	}
+	
+	return 0;
+}
+
 //This does the work of getting all the new rss stuff
-void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
+void  getNewRss(const rssm_feeditem* feed, const char* dir, FILE* log, int v) {
 	//get a descriptor for a socket
 	int socketDesc = socket(AF_INET, SOCK_STREAM, 0);
 	if (socketDesc < 0) {
@@ -447,6 +475,134 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 		return;
 	}
 	
-	free(reply);
+	//Now we have what we need from the connection, close it
 	close(socketDesc);
+	if (v) {
+		printtime(log);
+		fprintf(log, "Closing connection to %s ...\n", feed->url);
+		printtime(log);
+		fprintf(log, "Parsing xml into memory...\n");
+	}
+	
+	//We have to get the http header off of our xml.
+	char* xmlStr = malloc(sizeof(char) * (neededBytes + 1));
+	memset(xmlStr, 0, sizeof(char) * (neededBytes + 1));
+	//sizeof(char)*strlen(reply) - neededBytes is the number of bytes the header takes up
+	//the null character does not count and strlen ignores it
+	size_t headerBytes = sizeof(char)*strlen(reply) - (size_t)neededBytes;
+	//Now copy the right string into xmlStr. This is reply+headerBytes as to skip the header
+	strncpy(xmlStr, reply + headerBytes, neededBytes);
+	free(reply);
+	
+	//It's time to (finally) parse the xml!
+	xmlDoc *xmlDoc   = NULL;
+	xmlNode *xmlRoot = NULL;
+	LIBXML_TEST_VERSION
+	
+	if ((xmlDoc = xmlReadMemory(xmlStr, sizeof(char) * (strlen(xmlStr) + 1), NULL, "utf-8", 0)) == NULL) {
+		printtime(log);
+		fprintf(log, "Error parsing xml recieved from %s .\n", feed->url);
+		free(xmlStr);
+		return;
+	}
+	
+	xmlRoot = xmlDocGetRootElement(xmlDoc);
+	
+	if (strcmp((char *)xmlRoot->name, "rss") != 0 ) {
+		printtime(log);
+		fprintf(log, "No rss found at %s .\n", feed->url);
+		free(xmlStr);
+		xmlFreeDoc(xmlDoc);
+		return;
+	}
+	
+	if (v) {
+		printtime(log);
+		fprintf(log, "rss found in xml on %s !\n", feed->url);
+	}
+	
+	if (v) {
+		printtime(log);
+		fprintf(log, "Getting description data for %s ...\n", feed->tag);
+	}
+	
+	//Write the description of the rss channel to the desc fifo
+	xmlNode *channel     = xmlRoot->children;
+	xmlNode *channelElem = NULL;
+	if (strcmp((char *)channel->name, "channel") != 0) {
+		if (v) {
+			printtime(log);
+			fprintf(log, "No rss channel was found at url %s \n.", feed->url);
+		}
+
+		fprintf(feed->desc, "No data found about rss channel.\n");
+		fflush(feed->desc);
+		
+		xmlFreeDoc(xmlDoc);
+		free(xmlStr);
+		return;
+	} else {
+		channelElem = channel->children;
+		while (strcmp((char *)channelElem->name, "item") != 0) {
+			//Check if the desc file contains the exact data we've found
+			//It's up to the end user to only get the newest data
+			//The user can do this by keeping a cache of what name's they've read in (from the bottom) and skipping lines that have that name further up b/c those are older
+			
+			char tmp[strlen((char *)channelElem->children->content) + 2];
+			tmp[0] = '\0';
+			strcpy(tmp, (char *)channelElem->children->content);
+			strcat(tmp, "\n");
+			
+			if (!contains(feed->desc, tmp)) {
+				fprintf(feed->desc, "%s: %s\n", (char *)channelElem->name, (char *)channelElem->children->content);
+				fflush(feed->desc);
+			}
+		
+			channelElem = channelElem->next;
+		}
+	}
+	
+	//The top item of the rss feed is the newest. We want to add the items to the fifo oldest first, so we start at the last element
+	//Go through all items until reach an element not named item
+	channelElem = channel->last;
+	while (strcmp((char *)channelElem->name, "item") == 0) {
+		//First we find the title, which is what the fifo sorts by
+		xmlNode* rssElem = channelElem->children;
+		while (strcmp((char *)rssElem->name, "title") != 0)
+			rssElem = rssElem->next;
+		//Now rssElem is the title of the current item
+		//See if the fifo contains the title. If not, we can go ahead and add the current item backwards into the fifo (backwards for tail)
+		char search[strlen((char *)rssElem->children->content) + 8];
+		search[0] = '\0';
+		strcpy(search, "title: ");
+		strcat(search, (char *)rssElem->children->content);
+		
+		if (!contains(feed->out, search)) {
+			//start from the last element of the item
+			rssElem = channelElem->last;
+			//Stop at last to make sure we don't go out of bounds
+			while (rssElem != channelElem->children) {
+				if (rssElem->type == XML_ELEMENT_NODE) {
+					fprintf(feed->out, "%s: %s\n", (char *)rssElem->name, (char *)rssElem->children->content);
+					fflush(feed->out);
+				} else {
+					fprintf(log, "%d %s", rssElem->type, (char *)rssElem->name);
+				}
+				
+				rssElem = rssElem->prev;
+			}
+			
+			if (rssElem->type == XML_ELEMENT_NODE) {
+				fprintf(feed->out, "%s: %s\nITEMS\n", (char *)rssElem->name, (char *)rssElem->children->content);
+				fflush(feed->out);
+			} else {
+				fprintf(log, "%d %s", rssElem->type, (char *)rssElem->name);
+			}
+		}
+		
+		channelElem = channelElem->prev;
+	}
+	
+	xmlFreeDoc(xmlDoc);
+	free(xmlStr);
 }
