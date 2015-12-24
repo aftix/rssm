@@ -255,6 +255,36 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 	xmlFreeDoc(xmlDoc);
 }
 
+static void printChildren(const xmlNode* root, FILE* f) {
+	xmlNode* n = root->last;
+	
+	while (n != NULL) {
+		switch(n->type) {
+			case XML_TEXT_NODE:
+				if (strcmp((char *)n->content, "") != 0 && strncmp((char *)n->content, "\n", 1) != 0 && !contains(f, (char *)n->content))
+					fprintf(f, "%s\n", (char *)n->content);
+				fflush(f);
+				break;
+			default:
+				if (n->children != NULL && n->children->type == XML_TEXT_NODE && 
+				   strcmp((char *)n->children->content, "") != 0 && strncmp((char *)n->children->content, "\n", 1) != 0) {
+					
+					if (strcmp((char *)n->name, "link") == 0 || strcmp((char *)n->name, "guid") == 0 || strcmp((char *)n->name, "category") == 0)
+						fprintf(f, "%s: %s\n", (char *)n->name, (char *)n->children->content);
+					else
+						fprintf(f, "%s: ", (char *)n->name);
+				}
+				
+				if (n != NULL)
+					printChildren(n, f);
+				
+				fflush(f);
+				break;
+		}
+		n = n->prev;
+	}
+}
+
 static int getAtom(const xmlNode* xmlRoot, const rssm_feeditem* feed, FILE* log, int v) {
 	return 0;
 }
@@ -273,11 +303,12 @@ static int getRss(const xmlNode* xmlRoot, const rssm_feeditem* feed, FILE* log, 
 	//Write the description of the rss channel to the desc fifo
 	xmlNode *channel     = xmlRoot->children;
 	xmlNode *channelElem = NULL;
-	if (strcmp((char *)channel->name, "text") == 0) {
+	while (channel != NULL && strcmp((char *)channel->name, "text") == 0) {
 		channel = channel->next;
 	}
 	
-	if (strcmp((char *)channel->name, "channel") != 0) {
+	
+	if (channel == NULL || strcmp((char *)channel->name, "channel") != 0) {
 		if (v) {
 			printtime(log);
 			fprintf(log, "No rss channel was found at url %s .\n", feed->url);
@@ -287,86 +318,97 @@ static int getRss(const xmlNode* xmlRoot, const rssm_feeditem* feed, FILE* log, 
 		fflush(feed->desc);
 		
 		return -1;
-	} else {
-		if (v) {
-			printtime(log);
-			fprintf(log, "Description data found!\n");
-		}
-		channelElem = channel->children;
-		while (strcmp((char *)channelElem->name, "item") != 0) {
-			//Check if the desc file contains the exact data we've found
-			//It's up to the end user to only get the newest data
-			//The user can do this by keeping a cache of what name's they've read in (from the bottom) and skipping lines that have that name further up b/c those are older
-			
-			//Make sure that the tag has children so we can get the content.
-			if (channelElem->children == NULL || channelElem->children->content == NULL) {
-				channelElem = channelElem->next;
-				continue;
-			}
-			
-			char tmp[strlen((char *)channelElem->children->content) + 2];
-			tmp[0] = '\0';
-			strcpy(tmp, (char *)channelElem->children->content);
-			strcat(tmp, "\n");
-			
-			if (!contains(feed->desc, tmp)) {
-				fprintf(feed->desc, "%s: %s\n", (char *)channelElem->name, (char *)channelElem->children->content);
-				fflush(feed->desc);
-			}
-			
-			channelElem = channelElem->next;
-		}
 	}
 	
 	if (v) {
 		printtime(log);
-		fprintf(log, "Getting items for %s ...\n", feed->tag);
+		fprintf(log, "Description data found!\n");
+	}
+	channelElem = channel->children;
+	
+	if (channelElem == NULL) {
+		printtime(log);
+		fprintf(log, "Error going through rss channel %s .\n", feed->tag);
+		return -1;
 	}
 	
-	//The top item of the rss feed is the newest. We want to add the items to the fifo oldest first, so we start at the last element
-	//Go through all items until reach an element not named item
-	channelElem = channel->last;
+	while (channelElem != NULL && channelElem->type == XML_TEXT_NODE) {
+		channelElem = channelElem->next;
+	}
 	
-	if (strcmp((char *)channelElem->name, "item") != 0) {
+	if (channelElem == NULL) {
+		printtime(log);
+		fprintf(log, "Nothing found on rss channel %s .\n", feed->tag);
+	}
+	
+	while (channelElem != NULL && strcmp((char *)channelElem->name, "item") != 0) {
+		if (channelElem->type == XML_TEXT_NODE) {
+			channelElem = channelElem->next;
+			continue;
+		}
+		
+		xmlNode* tmp = channelElem->children;
+		while (tmp != NULL) {
+			if (tmp->type != XML_TEXT_NODE) {
+				printChildren(tmp->parent, feed->desc);
+				fflush(feed->desc);
+				break;
+			}
+			tmp = tmp->next;
+		}
+		
+		if (tmp == NULL && channelElem->children != NULL && strcmp((char *)channelElem->children->content, "") != 0 && 
+		   strncmp((char *)channelElem->children->content, "\n", 1) != 0) {
+			char toWrite[strlen((char *)channelElem->name) + strlen((char *)channelElem->children->content) + 4];
+			sprintf(toWrite, "%s: %s\n", (char *)channelElem->name, (char *)channelElem->children->content);
+			if (!contains(feed->desc, toWrite))
+				fprintf(feed->desc, toWrite);
+			fflush(feed->desc);
+		}
+		
+		channelElem = channelElem->next;
+	}
+	
+	if (v) {
+		printtime(log);
+		fprintf(log, "Done getting descriptions for %s .\n", feed->tag);
+	}
+	
+	channelElem = channel->last;
+	while (channelElem != NULL && channelElem->type == XML_TEXT_NODE) {
+		printf("%s\n", (char *)channelElem->name);
 		channelElem = channelElem->prev;
 	}
 	
-	while (strcmp((char *)channelElem->name, "item") == 0) {
-		//First we find the title, which is what the fifo sorts by
-		xmlNode* rssElem = channelElem->children;
-		while (strcmp((char *)rssElem->name, "link") != 0)
-			rssElem = rssElem->next;
-		//Now rssElem is the title of the current item
-		//See if the fifo contains the title. If not, we can go ahead and add the current item backwards into the fifo (backwards for tail)
-		char search[strlen((char *)rssElem->children->content) + 7];
-		search[0] = '\0';
-		strcpy(search, "link: ");
-		strcat(search, (char *)rssElem->children->content);
-		
-		if (!contains(feed->out, search)) {
-			//start from the last element of the item
-			rssElem = channelElem->last;
-			//Stop at last to make sure we don't go out of bounds
-			while (rssElem != channelElem->children) {
-				if (rssElem->type == XML_ELEMENT_NODE && rssElem->children != NULL && rssElem->children->content != NULL) {
-					fprintf(feed->out, "%s: %s\n", (char *)rssElem->name, (char *)rssElem->children->content);
-					fflush(feed->out);
-				} else {
-					fprintf(log, "%d %s\n", rssElem->type, (char *)rssElem->name);
-				}
-				
-				rssElem = rssElem->prev;
-			}
-			
-			if (rssElem->type == XML_ELEMENT_NODE && rssElem->children != NULL && rssElem->children->content != NULL) {
-				fprintf(feed->out, "%s: %s\nITEMS\n", (char *)rssElem->name, (char *)rssElem->children->content);
-				fflush(feed->out);
-			} else {
-				fprintf(log, "%d %s\n", rssElem->type, (char *)rssElem->name);
-				fprintf(feed->out, "ITEMS\n");
-				fflush(feed->out);
-			}
+	if (channelElem == NULL) {
+		printtime(log);
+		fprintf(log, "Error going through xml for %s .\n", feed->tag);
+	}
+	
+	while (channelElem != NULL && (strcmp((char *)channelElem->name, "item") == 0 || channelElem->type == XML_TEXT_NODE)) {
+		if (channelElem->type == XML_TEXT_NODE) {
+			channelElem = channelElem->prev;
+			continue;
 		}
+		
+		xmlNode* rssElem = channelElem->children;
+		while (rssElem != NULL && strcmp((char *)rssElem->name, "link") != 0)
+			rssElem = rssElem->next;
+		
+		if (rssElem == NULL || rssElem->children == NULL || rssElem->children->type != XML_TEXT_NODE)
+			continue;
+		
+		char check[strlen((char *)rssElem->children->content) + 8];
+		sprintf(check, "link: %s\n", (char *)rssElem->children->content);
+		
+		if (contains(feed->out, check)) {
+			channelElem = channelElem->prev;
+			continue;
+		}
+		
+		printChildren(channelElem, feed->out);
+		fprintf(feed->out, "ITEMS\n");
+		fflush(feed->out);
 		
 		channelElem = channelElem->prev;
 	}
