@@ -1,3 +1,2 @@
-set up pid lock
-set up signal handling
-set up checking loop
+Clean up code
+test

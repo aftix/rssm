@@ -18,13 +18,14 @@ struct argp_option options[] = {
 	{"logfile",   'l', "FILE", 0, "Specify path for rssm to log"},
 	{"nodaemon",  'D', 0,      0, "Don't run as a daemon (logs to stdout)"},
 	{"checks",    'c', "MINS", 0, "Set the number of minutes between rss feed checks (default is 5)"},
+	{"force",     'F', 0,      0, "Force a SIGTERM on any running rssm daemons"},
 	{ 0 }
 };
 #endif //MAIN_FILE
 
 //Contain all the options of rssm
 struct __options {
-	int verbose, daemon, mins;
+	int verbose, daemon, mins, force;
 	char* list;
 	char* directory;
 	char* log;

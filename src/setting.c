@@ -36,6 +36,9 @@ error_t parseArg(int key, char* arg, struct argp_state *state) {
 		case 'c':
 			opts->mins = atoi(arg);
 			break;
+		case 'F':
+			opts->force = 1;
+			break;
 		case ARGP_KEY_END:
 			break;
 		default:

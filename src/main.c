@@ -3,6 +3,9 @@
 #include <unistd.h>
 #include <signal.h>
 #include <string.h>
+
+#include <curl/curl.h>
+
 #define MAIN_FILE
 #include "setting.h"
 #include "control.h"
@@ -42,6 +45,8 @@ static void freeMem(rssm_options *opts, rssm_feeditem** feeds, FILE* log) {
 	
 	if (log != NULL)
 		fclose(log);
+	
+	curl_global_cleanup();
 }
 
 static void smartSleep(int secs) {
@@ -58,12 +63,15 @@ static void smartSleep(int secs) {
 void handleTerm(int signo, siginfo_t *sinfo, void *context);
 
 int main(int argc, char** argv) {
+	curl_global_init(CURL_GLOBAL_DEFAULT);
+	
 	//default configuration
 	rssm_options opts;
 	//default is set at compile time
 	opts.verbose = VERBOSE;
 	opts.daemon  = 1;
 	opts.mins    = 5;
+	opts.force   = 0;
 	
 	//Get the config path of $HOME/.config/ through all means avaliable
 	char* configPath = getConfigPath(opts.verbose);
@@ -94,9 +102,15 @@ int main(int argc, char** argv) {
 	
 	//Check the lockfile
 	int pid = checkLock("/tmp/rssm.lock");
-	if (pid > 0) {
+	if (pid > 0 && !opts.force) {
 		printf("Error! There is another instance running with pid %d . Only one rssm can be run at a time.\n", pid);
 		return -1;
+	} else if (opts.force && pid > 0) {
+		if (opts.verbose)
+			printf("Killing current daemon...\n");
+		kill(pid, SIGTERM);
+		remove("/tmp/rssm.lock");
+		checkLock("/tmp/rssm.lock");
 	} else if (pid == -1) {
 		printf("Error! Lock file can not be created. Exiting.\n");
 		return -1;
@@ -275,7 +289,7 @@ int main(int argc, char** argv) {
 		while (feeds[i] != NULL) {
 			if (opts.verbose) {
 				printtime(log);
-				fprintf(log, "Checking rss feed %s for new items.\n", feeds[i]->tag);
+				fprintf(log, "Checking rss feed %s for new items...\n", feeds[i]->tag);
 			}
 			getNewRss(feeds[i], log, opts.verbose);
 			i++;

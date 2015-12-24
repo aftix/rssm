@@ -1,14 +1,12 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <time.h>
+#include <signal.h>
 #include <fcntl.h>
 #include <string.h>
-#include <netdb.h>
-#include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
 
+#include <curl/curl.h>
 #include <libxml/parser.h>
 #include <libxml/tree.h>
 
@@ -126,207 +124,6 @@ int makeFile(const char* path, FILE* log, int v) {
 	return 0;
 }
 
-//This function gets the port at the tail end of an url, defaults to 80
-static int getPort(const char* url) {
-	//pos is now at the length of url-1, which is the last element, or \0
-	size_t pos = strlen(url);
-	
-	//Look for a : or a . . The : indicates a port number, the . before a : indicates no port on the tail end
-	while (url[pos] != ':' && url[pos] != '.') pos--;
-	
-	//If it is a ., then no port, default to 0
-	if (url[pos] == '.')
-		return 80;
-	
-	//Now we get the port until the end by incrementing pos (to pass over :) and waiting until we see a \0
-	//length of url - our position + 1 = how many chars are left
-	char buffer[strlen(url) - pos  + 1];
-	memset(buffer, 0, sizeof(char) * (strlen(url) - pos + 1));
-	
-	size_t i = 0;
-	//The string can end with a \0 or a /, as something could be like google.com:80/, test.com/blah.html:80/
-	while (url[pos] != '\0' && url[pos] != '/') {
-		buffer[i] = url[pos];
-		i++;
-		pos++;
-	}
-	
-	//Now we atoi
-	return atoi(buffer);
-}
-
-//This function returns the ip address of a hostname. It ignores port number
-//if hostOnly is 1 it just returns the hostname like www.google.com
-static char* getIp(const char* url, int hostOnly) {
-	//Pos is the last index of url, or \0
-	int pos = strlen(url);
-	
-	//Look for a . or a :, a . before : implies no port
-	while(url[pos] != ':' && url[pos] != '.') pos--;
-	
-	//If pos is . then no port, we can just set pos to strlen to negate the port removal part
-	if (url[pos] == '.')
-		pos = strlen(url);
-	
-	//This is the url without port: we start at pos-1 which is the char before :
-	char portless[pos+1];
-	portless[pos] = '\0';
-	while (pos >= 0) {
-		portless[pos] = url[pos];
-		pos--;
-	}
-	
-	//We have to get the core of the url - no http://, i.e. www.google.com not http://google.com/#q
-	char core[strlen(portless) + 1];
-	memset(core, 0, sizeof(char) * (strlen(portless) + 1));
-	
-	pos = 0;
-	size_t core_pos = 0;
-	//If the url has http://, ignore that. Check the first 4 chars. We want www. If not, just put it at the front of core
-	if (strncmp(portless, "http://", sizeof(char) * 7) == 0) {
-		pos = 7;
-		
-		strcpy(core, "www.");
-		core_pos = 4;
-		
-		if (strncmp(portless, "http://www.", sizeof(char) * 11) == 0) {
-			pos += 4;
-		}
-	} else if (strncmp(portless, "https://", sizeof(char) * 8) == 0) { 
-		pos = 8;
-		
-		strcpy(core, "www.");
-		core_pos = 4;
-		
-		if (strncmp(portless, "https://www.", sizeof(char) * 12) == 0) {
-			pos += 4;
-		}
-	} else {
-		strcpy(core, "www.");
-		core_pos = 4;
-		
-		if (strncmp(portless, "www.", sizeof(char) * 4) == 0) {
-			pos += 4;
-		}
-	}
-	
-	//Now just move over chars until a / or \0 is hit
-	while (portless[pos] != '/' && portless[pos] != '\0') {
-		core[core_pos] = portless[pos];
-		core_pos++;
-		pos++;
-	}
-	core[core_pos] = '\0';
-	
-	if (hostOnly) {
-		char* ret = malloc(sizeof(char) * (strlen(core) + 1));
-		strcpy(ret, core);
-		return ret;
-	}
-	
-	struct hostent *he;
-	struct in_addr **addrList;
-	size_t i;
-	char* ip = malloc(sizeof(char) * 100);
-	ip[0] = '\0';
-	
-	if ((he = gethostbyname(core)) == NULL) {
-		return malloc(sizeof(char));
-	}
-	
-	addrList = (struct in_addr **) he->h_addr_list;
-	for (i = 0; addrList[i] != NULL; i++)
-		strcpy(ip, inet_ntoa(*addrList[i]));
-	return ip;
-}
-
-//Build the http request for a url
-static char* httpGetForUrl(const char* url) {
-	//hostname for http 1.1
-	char* host = getIp(url, 1);
-	
-	size_t pos = 0;
-	if (strncmp(url, "http://", sizeof(char) * 7) == 0)
-		pos = 7;
-	else if (strncmp(url, "https://", sizeof(char) * 8) == 0)
-		pos = 8;
-	
-	char urlp[strlen(url)+1];
-	memset(urlp, 0, sizeof(char) * (strlen(url) + 1));
-
-	size_t bpos = strlen(url);
-	//remove port from url
-	while(url[bpos] != ':' && url[bpos] != '.') bpos--;
-	
-	if (url[bpos] == '.')
-		bpos = strlen(url);
-	
-	strncpy(urlp, url, sizeof(char) * bpos);
-	
-	//Find first / after the https?://, those if statements places starting pos after any https?://
-	while (urlp[pos] != '/' && urlp[pos] != '\0') pos++;
-	
-	//If we have no /'s, then we want to request root
-	if (urlp[pos] == '\0' || pos == strlen(urlp)-1) {
-		char* ret = malloc(sizeof(char) * (strlen(host) + 27));
-		snprintf(ret, sizeof(char) * (strlen(host) + 27), "GET / HTTP/1.1\r\nHost: %s\r\n\r\n", host);
-		free(host);
-		return ret;
-	}
-	
-	//Now we can build up the get request
-	char* ret = malloc(sizeof(char) * (strlen(urlp) + strlen(host) - pos + 27));
-	snprintf(ret, sizeof(char) * (strlen(urlp) + strlen(host) - pos + 27), "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", urlp+pos, host);
-	free(host);
-	return ret;
-}
-
-//Gets the length of the content from http response
-static int getBytes(const char* resp) {
-	//what we're looking for
-	char* checkFor = "Content-Length: ";
-	
-	size_t i = 0;
-	//Go through string
-	while (resp[i] != '\0') {
-		//If the character is a 'C' we need to check if we have a match on checkFor
-		//The if statement only evaluates the right if [i] is 'C'
-		if (resp[i] == 'C' && strncmp(resp+i, checkFor, strlen(checkFor)) == 0) {
-			//Ok, we have a match. Time to get the number from this
-			//First we set the index to the end of checkFor
-			i += strlen(checkFor);
-			if (resp[i] == '\0' || resp[i] == '\r' || resp[i] == '\n')
-				return -1;
-			//the length can be reasonable contained by 127 digits
-			char buffer[128];
-			memset(buffer, 0, sizeof(char) * 128);
-			//copy at most 127 chars into buffer from resp starting at i 
-			strncpy(buffer, resp + i, sizeof(char)*127);
-			
-			//buffer is now the number
-			//return it converted to an int
-			return atoi(buffer);
-		}
-		i++;
-	}
-	
-	//failure
-	return -1;
-}
-
-//gets the number of bytes a message has - the header
-static int contentBytes(const char* resp) {
-	size_t i = 0;
-	
-	while (resp[i] != '\0') {
-		if (strncmp(resp+i, "\r\n\r\n", sizeof(char) * 4) == 0) 
-			break;
-		i++;
-	}
-
-	return sizeof(char) * (strlen(resp) - i - 1);
-}
-
 //check if fifo on fd contains the search given
 static int contains(FILE *f, const char* search) {
 	//Make sure we start reading from the start of the file every time
@@ -349,150 +146,75 @@ static int contains(FILE *f, const char* search) {
 	return 0;
 }
 
+//Local struct variable for curlWrite
+struct __curlResp {
+	char* mem;
+	size_t size;
+};
+
+//Writes data from curl into a string
+size_t curlWrite(void* ptr, size_t size, size_t nmemb, void* userdata) {
+	size_t nbytes = size * nmemb;
+	struct __curlResp *memr = (struct __curlResp *)userdata;
+	
+	memr->mem = realloc(memr->mem, sizeof(char) * memr->size + nbytes + 1);
+	if (memr->mem == NULL) {
+		raise(SIGTERM);
+	}
+	
+	memcpy(&(memr->mem[memr->size]), ptr, nbytes);
+	memr->size += nbytes;
+	memr->mem[memr->size] = '\0';
+	
+	return nbytes;
+}
+
+//Uses curl to get xml from the url
+static char* getXmlFromCurl(const char* url, FILE* log, int v) {
+	if (v) {
+		printtime(log);
+		fprintf(log, "Starting to get xml from %s with curl...\n", url);
+	}
+	
+	CURL *curl;
+	CURLcode res;
+	
+	//Initialize curl
+	
+	struct __curlResp resp = {malloc(sizeof(char)), 0};
+	curl = curl_easy_init();
+	if (curl) {
+		//set options
+		curl_easy_setopt(curl, CURLOPT_URL, url);
+		curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 4096*2);
+		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&resp);
+		
+		//get the data
+		res = curl_easy_perform(curl);
+		if (res != CURLE_OK) {
+			printtime(log);
+			fprintf(log, "Curl error on url %s : %s\n", url, curl_easy_strerror(res));
+			curl_easy_cleanup(curl);
+			return NULL;
+		}
+	} else {
+		printtime(log);
+		fprintf(log, "Error initializing curl for url %s !\n", url);
+		return NULL;
+	}
+	curl_easy_cleanup(curl);
+	
+	return resp.mem;
+}
+
 //This does the work of getting all the new rss stuff
 void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
-	//get a descriptor for a socket
-	int socketDesc = socket(AF_INET, SOCK_STREAM, 0);
-	if (socketDesc < 0) {
-		printtime(log);
-		fprintf(log, "Failed to create socket for url %s, tag %s.\n", feed->url, feed->tag);
+	//Use libcurl to get the string
+	char* xmlStr = getXmlFromCurl(feed->url, log, v);
+	if (xmlStr == NULL) {
 		return;
 	}
-	
-	//socket address to the server specified by feed
-	struct sockaddr_in server;
-	server.sin_family = AF_INET;
-	char *tmp;
-	if (v) {
-		printtime(log);
-		fprintf(log, "Getting port from %s...\n", feed->url);
-	}
-	server.sin_port = htons(getPort(feed->url));
-	if (v) {
-		printtime(log);
-		fprintf(log, "Getting ip from %s...\n", feed->url);
-	}
-	server.sin_addr.s_addr = inet_addr(tmp = getIp(feed->url, 0));
-	free(tmp);
-	
-	if (v) {
-		printtime(log);
-		fprintf(log, "Starting connection to socket at url %s, ip %s, and port %d...\n", feed->url, getIp(feed->url, 0), getPort(feed->url));
-	}
-	if (connect(socketDesc, (struct sockaddr *)&server, sizeof(server)) < 0) {
-		printtime(log);
-		fprintf(log, "Error connecting to %s .\n", feed->url);
-		return;
-	}
-	
-	if (v) {
-		printtime(log);
-		fprintf(log, "Connection succesful to %s !", feed->url);
-	}
-	
-	if (v) {
-		printtime(log);
-		fprintf(log, "Getting http request for %s\n", feed->url);
-	}
-	//Now we get the correct page off of the rss;
-	char* msg = httpGetForUrl(feed->url);
-	//Send the GET request to the server
-	if (send(socketDesc, msg, strlen(msg), 0) < 0) {
-		printtime(log);
-		fprintf(log, "Error sending http request to %s .\n", feed->url);
-		close(socketDesc);
-		free(msg);
-		return;
-	}
-	free(msg);
-	
-	if (v) {
-		printtime(log);
-		fprintf(log, "Sent http request to %s !\n", feed->url);
-	}
-	
-	//Get reply
-	//Since it's http the data will end with a \r\n, so check for that
-	char* reply = malloc(sizeof(char) * REPLY_SIZE);
-	memset(reply, 0, sizeof(char) * REPLY_SIZE);
-	size_t alreadyRead = 0;
-	
-	//Get initial part (header)
-	int rd = recv(socketDesc, reply, REPLY_SIZE - 1, 0);
-	if (rd < 0) {
-		printtime(log);
-		fprintf(log, "Error reading http response from %s .\n", feed->url);
-		close(socketDesc);
-		free(reply);
-		return;
-	}
-	alreadyRead = rd;
-	
-	if (v) {
-		printtime(log);
-		fprintf(log, "Recieving http respnse...\n");
-	}
-	
-	int neededBytes = getBytes(reply);
-	int hasBytes    = contentBytes(reply);
-	
-	//make reply sufficently large
-	if (neededBytes + alreadyRead > REPLY_SIZE) {
-		reply = realloc(reply, neededBytes + alreadyRead);
-		memset(reply + alreadyRead + 1, 0, sizeof(char)*(neededBytes + alreadyRead - REPLY_SIZE));
-	}
-	
-	if (neededBytes < 0 || hasBytes < 0) {
-		printtime(log);
-		fprintf(log, "Error parsing http header from %s .\n", feed->url);
-		close(socketDesc);
-		free(reply);
-		return;
-	}
-	
-	fcntl(socketDesc, F_SETFL, O_NONBLOCK);
-	while (hasBytes < neededBytes) {
-		rd = recv(socketDesc, reply + alreadyRead, (sizeof reply) - alreadyRead - 1, 0);
-		if (rd < 0) {
-			switch (errno) {
-				case EINTR:
-				case EAGAIN:
-					continue;
-			}
-			alreadyRead = -1;
-			break;
-		}
-		
-		alreadyRead += rd;
-		hasBytes    += rd;
-	}
-	
-	if (alreadyRead < 0) {
-		free(reply);
-		printtime(log);
-		fprintf(log, "Error recieving message from %s .\n", feed->url);
-		close(socketDesc);
-		return;
-	}
-	
-	//Now we have what we need from the connection, close it
-	close(socketDesc);
-	if (v) {
-		printtime(log);
-		fprintf(log, "Closing connection to %s ...\n", feed->url);
-		printtime(log);
-		fprintf(log, "Parsing xml into memory...\n");
-	}
-	
-	//We have to get the http header off of our xml.
-	char* xmlStr = malloc(sizeof(char) * (neededBytes + 1));
-	memset(xmlStr, 0, sizeof(char) * (neededBytes + 1));
-	//sizeof(char)*strlen(reply) - neededBytes is the number of bytes the header takes up
-	//the null character does not count and strlen ignores it
-	size_t headerBytes = sizeof(char)*strlen(reply) - (size_t)neededBytes;
-	//Now copy the right string into xmlStr. This is reply+headerBytes as to skip the header
-	strncpy(xmlStr, reply + headerBytes, neededBytes);
-	free(reply);
 	
 	//It's time to (finally) parse the xml!
 	xmlDoc *xmlDoc   = NULL;
@@ -552,6 +274,12 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 			//It's up to the end user to only get the newest data
 			//The user can do this by keeping a cache of what name's they've read in (from the bottom) and skipping lines that have that name further up b/c those are older
 			
+			//Make sure that the tag has children so we can get the content.
+			if (channelElem->children == NULL) {
+				channelElem = channelElem->next;
+				continue;
+			}
+			
 			char tmp[strlen((char *)channelElem->children->content) + 2];
 			tmp[0] = '\0';
 			strcpy(tmp, (char *)channelElem->children->content);
@@ -561,7 +289,7 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 				fprintf(feed->desc, "%s: %s\n", (char *)channelElem->name, (char *)channelElem->children->content);
 				fflush(feed->desc);
 			}
-		
+			
 			channelElem = channelElem->next;
 		}
 	}
