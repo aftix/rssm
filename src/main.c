@@ -195,11 +195,10 @@ int main(int argc, char** argv) {
 		printtime(log);
 		fprintf(log, "Reading in feedlists...\n");
 	}
-	//We already made sure we can read the file
-	FILE* feedfile = fopen(opts.list, "r");
+	
 	//List of feed items, currently NULL
 	//this list will always end with a NULL pointer
-	rssm_feeditem** feeds = getFeeds(feedfile, log, opts.verbose);
+	rssm_feeditem** feeds = getFeeds(opts.list, log, opts.verbose);
 	
 	if (opts.verbose) {
 		printtime(log);
@@ -234,7 +233,7 @@ int main(int argc, char** argv) {
 		strcat(tagPath, feeds[i]->tag);
 		if (opts.verbose) {
 			printtime(log);
-			fprintf(log, "Making %s fifo\n", tagPath);
+			fprintf(log, "Making %s file\n", tagPath);
 		}
 		stat = makeFile(tagPath, log, opts.verbose);
 		if (stat < 0) {
@@ -254,7 +253,7 @@ int main(int argc, char** argv) {
 			return 0;
 		}
 		
-		char* descPath  = malloc(sizeof(char) * (strlen(tagPath) + 5));
+		char* descPath  = malloc(sizeof(char) * (strlen(tagPath) + 6));
 		strcpy(descPath, tagPath);
 		strcat(descPath, " desc");
 		
@@ -266,6 +265,7 @@ int main(int argc, char** argv) {
 			freeMem(&opts, feeds, log);
 			return 0;
 		}
+		
 		feeds[i]->desc = fopen(descPath, "a+");
 		if (feeds[i]->desc == NULL) {
 			printtime(log);

@@ -1,5 +1,5 @@
 <b>rssm</b><br>
-A simple rss feed manager that depends on libcurl and libxml2.
+A simple rss feed manager that depends on iniparser, libcurl and libxml2.
 It can either run as a daemon or in terminal.
 
 Rssm reads a feedlist (default: $XDG_CONFIG_HOME/rssm.conf). It then sets up a directory (default $HOME/rss) to place the rss data

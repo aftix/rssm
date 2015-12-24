@@ -4,7 +4,10 @@
 #include <unistd.h>
 #include <pwd.h>
 #include <argp.h>
-#include <math.h>
+#include <signal.h>
+
+#include <iniparser.h>
+
 #include "setting.h"
 #include "rssmio.h"
 
@@ -183,135 +186,61 @@ char* getLogPath(const rssm_options *opts, int v) {
 	return ret;
 }
 
-rssm_feeditem** getFeeds(FILE* list, FILE* log, int v) {
-	//allocate the list of feed item pointers
-	rssm_feeditem** items = malloc(sizeof(rssm_feeditem *) * 2);
-	//Pre-allocate the first element, set last one to NULL
-	items[0] = malloc(sizeof(rssm_feeditem));
-	items[1] = NULL;
+rssm_feeditem** getFeeds(const char* list, FILE* log, int v) {
+	//ini dictionary from the list file
+	if (v) {
+		printtime(log);
+		fprintf(log, "Loading iniparser...\n");
+	}
+	dictionary *d = iniparser_load(list);
 	
-	//Read through the file by character
-	int ch; //Character read
-	int last = '\0'; //Last character read
-	char* curr = malloc(sizeof(char)); //Stores the word currently being read
-	curr[0]    = '\0';
-	size_t item = 0; //index for storing feed items
-	unsigned char inComment = 0; //flag for if we're in a comment
-	unsigned char inQuote   = 0; //flag for if we're in a quote
-	unsigned char escaped   = 0; //flag for if this character is escaped. Reset after reading in 1 more character
-	unsigned char tag       = 1; //flag to tell if we're reading in the tag or the url
-	while ((ch = fgetc(list)) != EOF) {
-		//If we see a \ then the next character is escaped; set the flag and continue
-		if (ch == '\\' && !escaped) {
-			escaped = 1;
-			continue;
-		}
-		
-		//If we see a " or ' that is not escaped we toggle the state of a quote and continue, the " doesn't actually get recorded.
-		if ((ch == '"' || ch == '\'') && !escaped) {
-			inQuote = !inQuote;
-			escaped = 0;
-			continue;
-		}
-		
-		//If we see a # not in quotes or not escaped it dumps the current word into memory and sets inComment to 1
-		if (ch == '#' && !escaped && !inQuote) {
-			inComment = 1; //Make sure comment flag is one
-			
-			//If we were reading a tag when the comment started, then drop the tag because it has no url
-			if (tag) {
-				printtime(log);
-				fprintf(log, "Tag %s has no url, ignoring...\n", curr);
-			//If we had nothing in the url, i.e. storing into url but no characters had been read, drop the tag by freeing it (since we're on url it'd of been dumped to memory)
-			} else if (strlen(curr) == 0) {
-				printtime(log);
-				fprintf(log, "Tag %s has no url, ignoring...\n", items[item]->tag);
-				free(items[item]->tag);
-			//Dump the tag and the url into memory if we had both when the comment started
-			} else {
-				//Allocate space for the url, which we're dumping
-				items[item]->url = malloc(sizeof(char) * (strlen(curr) + 1));
-				strcpy(items[item]->url, curr);
-				
-				free(curr);
-				curr    = malloc(sizeof(char));
-				curr[0] = '\0';
-				item++;
-				
-				//Reallocate items to add one more to the end
-				items             = realloc(items, sizeof(rssm_feeditem *) * (item + 2));
-				items[item]       = malloc(sizeof(rssm_feeditem));
-				items[item]->desc = NULL;
-				items[item]->out  = NULL;
-				items[item+1]     = NULL;
-			}
-		}
-		
-		//On newline we reset comments and dump current word
-		if (ch == '\n') {
-			inComment = 0; //set comment to false
-			inQuote = 0;   //set quote to false
-			escaped = 0;   //set escape to false
-			
-			//If we had a url that was longer than 0
-			if (strlen(curr) != 0 && !tag) {
-				items[item]->url = malloc(sizeof(char) * strlen(curr)+1);
-				strcpy(items[item]->url, curr);
-				
-				free(curr);
-				curr    = malloc(sizeof(char));
-				curr[0] = '\0';
-				item++;
-				
-				items             = realloc(items, sizeof(rssm_feeditem *) * (item + 2));
-				items[item]       = malloc(sizeof(rssm_feeditem));
-				items[item]->desc = NULL;
-				items[item]->out  = NULL;
-				items[item+1]     = NULL;
-			//If we had no url
-			} else if (!tag) {
-				printtime(log);
-				fprintf(log, "Tag %s has no url, ignoring...\n", items[item]->tag);
-			}//Other option is that we were on the tag. In that case we have no memory to print an error message
-			tag = 1; //the start of the next line will be a tag
-		}
-		
-		//On the first space after a tag, dump data 
-		if (tag && last != ' ' && ch == ' ') {
-			tag = 0;
-			if (strlen(curr) != 0) {
-				items[item]->tag = malloc(sizeof(char) * (strlen(curr) + 1));
-				strcpy(items[item]->tag, curr);
-				
-				free(curr);
-				curr   = malloc(sizeof(char));
-				curr[0] = '\0';
-			}
-		}
-		
-		//add everything else to the current word
-		if (ch != ' ' && ch != '\n' && !(ch == '#' && !escaped && !inQuote) && !(ch == '"' && !escaped) && !(ch == '\'' && !escaped) && !inComment) {
-			char* tmp = curr; //Tmp is what we had before
-			curr = malloc(sizeof(char) * (strlen(curr) + 2)); //Make curr big enough to hold 1 more char
-			strcpy(curr, tmp); //Copy the old curr into the new memory
-			curr[strlen(tmp)]   = (char)ch; //add the new ch and \0
-			curr[strlen(tmp)+1] = '\0';
-			free(tmp);
-			//Didn't use realloc because ch is set with strlen(tmp)
-		}
-		
-		last = ch; //set the last char
-		escaped = 0; //reset escaped
+	if (!iniparser_find_entry(d, "rss")) {
+		printtime(log);
+		fprintf(log, "No Rss section if feedlist file! Exiting...\n");
+		raise(SIGKILL);
 	}
 	
-	printtime(log);
-	fprintf(log, "Feedlist loaded!\n");
+	int tagNum = iniparser_getsecnkeys(d, "rss");
+	rssm_feeditem** feeds = malloc(sizeof(rssm_feeditem *) * (tagNum + 1));
 	
-	//free what we malloc'd on the last \n
-	free(items[item]);
-	items[item] = NULL;
+	if (v) {
+		printtime(log);
+		fprintf(log, "Parsing feedlist...\n");
+	}
 	
-	return items;
+	const char** name = malloc(sizeof(char *) * tagNum);
+	if (iniparser_getseckeys(d, "rss", name) == NULL) {
+		printtime(log);
+		fprintf(log, "Error reading in section keys!\n");
+		raise(SIGKILL);
+	}
+	
+	size_t i = 0;
+	for (i=0; i<tagNum; i++) {
+		feeds[i] = malloc(sizeof(rssm_feeditem));
+		char* tag = malloc(sizeof(char) * (strlen(name[i]) + 1));
+		strcpy(tag, name[i] + 4);
+		
+		const char* val = iniparser_getstring(d, name[i], "");
+		char* url = malloc(sizeof(char) * (strlen(val) + 1));
+		strcpy(url, val);
+		
+		feeds[i]->tag  = tag;
+		feeds[i]->url  = url;
+		feeds[i]->out  = NULL;
+		feeds[i]->desc = NULL;
+	}
+	feeds[i] = NULL;
+	
+	free(name);
+	
+	if (v) {
+		printtime(log);
+		fprintf(log, "Cleaning up iniparser...\n");
+	}
+	iniparser_freedict(d);
+	
+	return feeds;
 }
 
 //checks lock file

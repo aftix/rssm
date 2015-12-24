@@ -53,7 +53,7 @@ char* getHomePath(int v);
 char* getLogPath(const rssm_options *opts, int v);
 
 //Read in feedlists from a file
-rssm_feeditem** getFeeds(FILE* list, FILE* log, int v);
+rssm_feeditem** getFeeds(const char* list, FILE* log, int v);
 
 //Check lock file
 //returns pid if it exists, 0 if it doesn't, and -1 if it can't create a new one

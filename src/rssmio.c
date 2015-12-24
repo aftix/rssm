@@ -62,13 +62,13 @@ int makeDir(const char* path, FILE* log, int v) {
 int makeFile(const char* path, FILE* log, int v) {
 	if (v) {
 		printtime(log);
-		fprintf(log, "Checking that fifo %s exists...\n", path);
+		fprintf(log, "Checking that file %s exists...\n", path);
 	}
 	
 	struct stat st = {0};
 	
 	//Get stat for the path
-	//If file doesn't exist, make a fifo there (directory is ensured by prior call to makeDir)
+	//If file doesn't exist, make a file there (directory is ensured by prior call to makeDir)
 	if (stat(path, &st) != 0) {
 		if (v) {
 			printtime(log);
@@ -86,7 +86,7 @@ int makeFile(const char* path, FILE* log, int v) {
 		return 0;
 	}
 	
-	//Check if the file is a fifo...
+	//Check if the file is not a fifo...
 	if (v) {
 		printtime(log);
 		fprintf(log, "%s exists! Checking if it is a fifo...\n", path);
@@ -208,6 +208,10 @@ static char* getXmlFromCurl(const char* url, FILE* log, int v) {
 	return resp.mem;
 }
 
+//helper functions to get atom or rss
+static int getAtom(const xmlNode *xmlRoot, const rssm_feeditem* feed, FILE* log, int v);
+static int getRss(const xmlNode *xmlRoot, const rssm_feeditem* feed, FILE* log, int v);
+
 //This does the work of getting all the new rss stuff
 void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 	//Use libcurl to get the string
@@ -230,7 +234,7 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 	
 	xmlRoot = xmlDocGetRootElement(xmlDoc);
 	
-	if (strcmp((char *)xmlRoot->name, "rss") != 0 ) {
+	if (strcmp((char *)xmlRoot->name, "rss") != 0 && strcmp((char *)xmlRoot->name, "feed") != 0) {
 		printtime(log);
 		fprintf(log, "No rss found at %s .\n", feed->url);
 		free(xmlStr);
@@ -238,6 +242,24 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 		return;
 	}
 	
+	if (strcmp((char *)xmlRoot->name, "rss") == 0) {
+		getRss(xmlRoot, feed, log, v);
+	} else if (strcmp((char *)xmlRoot->name, "feed") == 0) {
+		getAtom(xmlRoot, feed, log, v);
+	}
+	
+	
+	fflush(log);
+	
+	free(xmlStr);
+	xmlFreeDoc(xmlDoc);
+}
+
+static int getAtom(const xmlNode* xmlRoot, const rssm_feeditem* feed, FILE* log, int v) {
+	return 0;
+}
+
+static int getRss(const xmlNode* xmlRoot, const rssm_feeditem* feed, FILE* log, int v) {
 	if (v) {
 		printtime(log);
 		fprintf(log, "rss found in xml on %s !\n", feed->url);
@@ -251,18 +273,20 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 	//Write the description of the rss channel to the desc fifo
 	xmlNode *channel     = xmlRoot->children;
 	xmlNode *channelElem = NULL;
+	if (strcmp((char *)channel->name, "text") == 0) {
+		channel = channel->next;
+	}
+	
 	if (strcmp((char *)channel->name, "channel") != 0) {
 		if (v) {
 			printtime(log);
-			fprintf(log, "No rss channel was found at url %s \n.", feed->url);
+			fprintf(log, "No rss channel was found at url %s .\n", feed->url);
 		}
-
+		
 		fprintf(feed->desc, "No data found about rss channel.\n");
 		fflush(feed->desc);
 		
-		xmlFreeDoc(xmlDoc);
-		free(xmlStr);
-		return;
+		return -1;
 	} else {
 		if (v) {
 			printtime(log);
@@ -275,7 +299,7 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 			//The user can do this by keeping a cache of what name's they've read in (from the bottom) and skipping lines that have that name further up b/c those are older
 			
 			//Make sure that the tag has children so we can get the content.
-			if (channelElem->children == NULL) {
+			if (channelElem->children == NULL || channelElem->children->content == NULL) {
 				channelElem = channelElem->next;
 				continue;
 			}
@@ -302,6 +326,11 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 	//The top item of the rss feed is the newest. We want to add the items to the fifo oldest first, so we start at the last element
 	//Go through all items until reach an element not named item
 	channelElem = channel->last;
+	
+	if (strcmp((char *)channelElem->name, "item") != 0) {
+		channelElem = channelElem->prev;
+	}
+	
 	while (strcmp((char *)channelElem->name, "item") == 0) {
 		//First we find the title, which is what the fifo sorts by
 		xmlNode* rssElem = channelElem->children;
@@ -319,21 +348,23 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 			rssElem = channelElem->last;
 			//Stop at last to make sure we don't go out of bounds
 			while (rssElem != channelElem->children) {
-				if (rssElem->type == XML_ELEMENT_NODE) {
+				if (rssElem->type == XML_ELEMENT_NODE && rssElem->children != NULL && rssElem->children->content != NULL) {
 					fprintf(feed->out, "%s: %s\n", (char *)rssElem->name, (char *)rssElem->children->content);
 					fflush(feed->out);
 				} else {
-					fprintf(log, "%d %s", rssElem->type, (char *)rssElem->name);
+					fprintf(log, "%d %s\n", rssElem->type, (char *)rssElem->name);
 				}
 				
 				rssElem = rssElem->prev;
 			}
 			
-			if (rssElem->type == XML_ELEMENT_NODE) {
+			if (rssElem->type == XML_ELEMENT_NODE && rssElem->children != NULL && rssElem->children->content != NULL) {
 				fprintf(feed->out, "%s: %s\nITEMS\n", (char *)rssElem->name, (char *)rssElem->children->content);
 				fflush(feed->out);
 			} else {
-				fprintf(log, "%d %s", rssElem->type, (char *)rssElem->name);
+				fprintf(log, "%d %s\n", rssElem->type, (char *)rssElem->name);
+				fprintf(feed->out, "ITEMS\n");
+				fflush(feed->out);
 			}
 		}
 		
@@ -345,6 +376,5 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 		fprintf(log, "Done reading rss data for %s .\n", feed->tag);
 	}
 	
-	xmlFreeDoc(xmlDoc);
-	free(xmlStr);
+	return 0;
 }

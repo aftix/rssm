@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-Iinclude/ -I/usr/include/libxml2 -c -Wall -pedantic -O2
-LFLAGS=-lxml2 -lcurl
+LFLAGS=-lxml2 -lcurl -liniparser
 
 OBJ=obj
 BIN=bin
