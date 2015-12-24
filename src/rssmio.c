@@ -309,9 +309,9 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 			rssElem = rssElem->next;
 		//Now rssElem is the title of the current item
 		//See if the fifo contains the title. If not, we can go ahead and add the current item backwards into the fifo (backwards for tail)
-		char search[strlen((char *)rssElem->children->content) + 8];
+		char search[strlen((char *)rssElem->children->content) + 7];
 		search[0] = '\0';
-		strcpy(search, "title: ");
+		strcpy(search, "link: ");
 		strcat(search, (char *)rssElem->children->content);
 		
 		if (!contains(feed->out, search)) {

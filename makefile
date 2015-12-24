@@ -22,3 +22,9 @@ $(OBJ)/%.o: src/%.c
 clean:
 	@rm -rf $(OBJ)
 	@rm -rf $(BIN)
+
+install:
+	@cp $(EXEC) /usr/$(EXEC)
+
+uninstall:
+	@rm /usr/$(EXEC)
