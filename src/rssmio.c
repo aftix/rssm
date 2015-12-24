@@ -305,7 +305,7 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 	while (strcmp((char *)channelElem->name, "item") == 0) {
 		//First we find the title, which is what the fifo sorts by
 		xmlNode* rssElem = channelElem->children;
-		while (strcmp((char *)rssElem->name, "title") != 0)
+		while (strcmp((char *)rssElem->name, "link") != 0)
 			rssElem = rssElem->next;
 		//Now rssElem is the title of the current item
 		//See if the fifo contains the title. If not, we can go ahead and add the current item backwards into the fifo (backwards for tail)
