@@ -163,6 +163,8 @@ int main(int argc, char** argv) {
 		log = stdout;
 	}
 	
+	dup2(fileno(log), fileno(stdout));
+	
 	//Now we are in daemon mode. 
 	//Change to "/", the only directory that a distro WILL have
 	if (opts.verbose) {

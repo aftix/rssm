@@ -407,7 +407,7 @@ static int getRss(const xmlNode* xmlRoot, const rssm_feeditem* feed, FILE* log, 
 		}
 		
 		printChildren(channelElem, feed->out);
-		fprintf(feed->out, "ITEMS\n");
+		fprintf(feed->out, "\nITEMS\n");
 		fflush(feed->out);
 		
 		channelElem = channelElem->prev;
