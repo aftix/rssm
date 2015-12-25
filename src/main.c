@@ -164,6 +164,7 @@ int main(int argc, char** argv) {
 	}
 	
 	dup2(fileno(log), fileno(stdout));
+	dup2(fileno(log), fileno(stderr));
 	
 	//Now we are in daemon mode. 
 	//Change to "/", the only directory that a distro WILL have
