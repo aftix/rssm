@@ -255,33 +255,75 @@ void  getNewRss(const rssm_feeditem* feed, FILE* log, int v) {
 	xmlFreeDoc(xmlDoc);
 }
 
-static void printChildren(const xmlNode* root, FILE* f) {
-	xmlNode* n = root->last;
+//Return the char without new line characters
+static char* noNewLines (const char* str) {
+	char* ret = malloc(strlen(str) + 1);
+	memset(ret, 0, strlen(str)+1);
 	
-	while (n != NULL) {
+	size_t i;
+	size_t j = 0;
+	for (i = 0; str[i] != '\0'; i++) {
+		if (str[i] != '\n')
+			if (j == 0 || !(str[i] == ' ' && ret[j-1] == ' '))
+				ret[j++] = str[i];
+	}
+	
+	printf("%s\n", ret);
+	
+	return ret;
+}
+
+static void printChildren(const xmlNode* root, FILE* f) {
+	xmlNode* n;
+	
+	for (n = root->last; n != NULL; n = n->prev) {
 		switch(n->type) {
 			case XML_TEXT_NODE:
-				if (strcmp((char *)n->content, "") != 0 && strncmp((char *)n->content, "\n", 1) != 0 && !contains(f, (char *)n->content))
-					fprintf(f, "%s\n", (char *)n->content);
-				fflush(f);
+				if (strcmp((char *)n->content, "") != 0 && strcmp((char *)n->content, "\n") != 0) {
+					char* tmp = NULL;
+					fprintf(f, "%s\n", tmp = noNewLines((char *)n->content));
+					fflush(f);
+					free(tmp);
+				}
+				break;
+			case XML_ELEMENT_NODE:
+				if (n->children != NULL) {
+					if (n->children->type == XML_TEXT_NODE && n->children->next == NULL) {
+						fprintf(f, "%s: ", (char *)n->name);
+						fflush(f);
+					}
+					printChildren(n, f);
+				} else {
+					fprintf(f, "%s: ", (char *)n->name);
+					
+					if (strcmp((char *)n->name, "link") == 0) {
+						xmlAttr* attr;
+						
+						for (attr = n->properties; attr != NULL; attr = attr->next) {
+							if (attr->children == NULL || strcmp((char *)attr->children->content, "") == 0 || strcmp((char *)attr->children->content, "\n") == 0)
+								continue;
+							if (strcmp((char *)attr->name, "href") == 0) {
+								fprintf(f, " %s\n", (char *)attr->children->content);
+								fflush(f);
+								break;
+							}
+						}
+					} else {
+						xmlAttr* attr;
+						
+						for (attr = n->properties; attr != NULL; attr = attr->next) {
+							if (attr->children == NULL || strcmp((char *)attr->children->content, "") == 0 || strcmp((char *)attr->children->content, "\n") == 0)
+								continue;
+							fprintf(f, "%s=%s ", (char *)attr->name, (char *)attr->children->content);
+						}
+						fprintf(f, "\n");
+						fflush(f);
+					}
+				}
 				break;
 			default:
-				if (n->children != NULL && n->children->type == XML_TEXT_NODE && 
-				   strcmp((char *)n->children->content, "") != 0 && strncmp((char *)n->children->content, "\n", 1) != 0) {
-					
-					if (strcmp((char *)n->name, "link") == 0 || strcmp((char *)n->name, "guid") == 0 || strcmp((char *)n->name, "category") == 0)
-						fprintf(f, "%s: %s\n", (char *)n->name, (char *)n->children->content);
-					else
-						fprintf(f, "%s: ", (char *)n->name);
-				}
-				
-				if (n != NULL)
-					printChildren(n, f);
-				
-				fflush(f);
 				break;
 		}
-		n = n->prev;
 	}
 }
 
